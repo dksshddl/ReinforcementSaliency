@@ -13,6 +13,7 @@ height = 224
 n_channels = 3
 frame_step = 6
 
+
 class CustomEnv(gym.Env):
 
     def __init__(self, video_type="train"):
@@ -100,9 +101,9 @@ class CustomEnv(gym.Env):
         self.saliency_view = Viewport(2048, 1024)
         self.set_dataset(video_type)
         self.target_video = random.choice(self.target_videos)
+        print(self.target_video + " start")
         ran_idx = random.randint(0, len(self.x_dict[self.target_video]) - 1)
         ran_x, ran_y = self.x_dict[self.target_video][ran_idx], self.y_dict[self.target_video][ran_idx]
-
         self.saliency = read_SalMap(self.saliency_info[self.target_video])
         self.video = []
         cap = cv2.VideoCapture(os.path.join(self.video_path, self.target_video))
@@ -138,21 +139,21 @@ class CustomEnv(gym.Env):
                 break
 
 
-def test(max_epochs=0):
+def ttest(max_epochs=0):
     env = CustomEnv()
     epoch = 0
     while epoch < max_epochs:
         obs, acs, next_obs, rewards, dones = [], [], [], [], []
-        ob, ac, target_video = env.reset()
+        ob, ac, target_video = env.reset(trajectory=False)
         while True:
-            next_ob, reward, done, next_ac = env.step(ac)
-
+            next_ob, reward, done, next_ac = env.step([0.1, 0.1])
+            env.render()
+            print(np.shape(ob), np.shape(next_ob), ac, next_ac, reward, done)
             obs.append(ob)
             acs.append(ac)
             next_obs.append(next_ob)
             rewards.append(reward)
             dones.append(done)
-
             if done:
                 break
 
@@ -161,7 +162,7 @@ def test(max_epochs=0):
             #     env.render()
         print("epoch # of ", epoch)
         print("obs shape: ", np.shape(obs))
-        print("acs shape: ", np.shape(acs), acs[98])
+        print("acs shape: ", np.shape(acs), acs[0])
         print("next_obs shape:", np.shape(next_obs))
         print("rewards shape: ", np.shape(rewards))
         print("dones shape: ", np.shape(dones))
@@ -169,4 +170,4 @@ def test(max_epochs=0):
 
 
 if __name__ == '__main__':
-    test()
+    ttest(1)

@@ -4,6 +4,7 @@ import os
 import numpy as np
 import tensorflow as tf
 
+from utils import config
 from utils.config import log_path, weight_path
 
 #### HYPER PARAMETERS ####
@@ -11,6 +12,7 @@ gamma = 0.99  # reward discount factor
 
 lr_critic = 3e-3  # learning rate for the critic
 lr_actor = 1e-3  # learning rate for the actor
+batch_size = None
 
 
 # tau = 1e-2  # soft target update rate
@@ -19,7 +21,6 @@ lr_actor = 1e-3  # learning rate for the actor
 class DDPG:
     def __init__(self, sess, state_dim, action_dim, action_max, action_min, load=None):
         self.sess = sess
-        batch_size = 1
         n_samples = 6
         self.state_dim = [n_samples] + state_dim  # [6, 224, 224, 3]
         self.action_dim = action_dim  # [2]
@@ -59,7 +60,7 @@ class DDPG:
             .apply_gradients(zip(self.params_grad, self.actor.trainable_weights))
 
         self.saver = tf.train.Saver()
-        self.writer = tf.summary.FileWriter(os.path.join(log_path, "ddpg_resnet"), self.sess.graph)
+        self.writer = tf.summary.FileWriter(os.path.join(log_path, config.DDPG_MOBILE), self.sess.graph)
         self.sess.run(tf.global_variables_initializer())
         self.critic_loss_summary = tf.summary.scalar("critic_loss", self.critic_loss)
         if load is not None:
@@ -96,15 +97,15 @@ class DDPG:
         return self.actor.predict([state])
 
     def save(self, epochs):
-        self.saver.save(self.sess, os.path.join(weight_path, "ddpg_resnet", 'model_ddpg_' + str(epochs) + '.ckpt'))
+        self.saver.save(self.sess, os.path.join(weight_path, config.DDPG_MOBILE, 'model_ddpg_' + str(epochs) + '.ckpt'))
 
     def load(self, load_path):
         self.saver.restore(self.sess, load_path)
 
     # policy
     def generate_critic_network(self, trainable):
-        state_in = tf.keras.layers.Input(batch_shape=[1] + self.state_dim)
-        action_in = tf.keras.layers.Input(batch_shape=[1] + self.action_dim)
+        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
+        action_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.action_dim)
         # x = tf.keras.layers.TimeDistributed(tf.keras.applications.ResNet50)
         # mask = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(mask_value=256., trainable=trainable), trainable=trainable)(state_in)
         x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(state_in)
@@ -122,7 +123,7 @@ class DDPG:
 
     # action-value
     def generate_actor_network(self, trainable):
-        state_in = tf.keras.layers.Input(batch_shape=[1] + self.state_dim)
+        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
         # mask = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(mask_value=256., trainable=trainable), trainable=trainable)(state_in)
         x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(state_in)
         x = tf.keras.layers.BatchNormalization(trainable=trainable)(x)
@@ -136,25 +137,27 @@ class DDPG:
         return model
 
     def generate_resnet_critic(self, trainable):
-        state_in = tf.keras.layers.Input(batch_shape=[1] + self.state_dim)
-        action_in = tf.keras.layers.Input(batch_shape=[1] + self.action_dim)
-        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
+        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
+        action_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.action_dim)
+        feature = tf.keras.applications.MobileNet(include_top=False, weights=None)
         x = tf.keras.layers.TimeDistributed(feature)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, stateful=True))(x)
+        x = tf.keras.layers.Flatten()(x)
+        # x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, stateful=True))(x)
         concat = tf.keras.layers.concatenate([x, action_in])
         x = tf.keras.layers.Dropout(0.5)(concat)
-        x = tf.keras.layers.Dense(1)(concat)
+        x = tf.keras.layers.Dense(1)(x)
         model = tf.keras.models.Model(inputs=[state_in, action_in], outputs=x)
         model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.losses.mean_squared_error)
         return model
 
     def generate_resnet_actor(self, trainable):
-        state_in = tf.keras.layers.Input(batch_shape=[1] + self.state_dim)
-        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
+        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
+        feature = tf.keras.applications.MobileNetV2(include_top=False, weights=None)
         x = tf.keras.layers.TimeDistributed(feature)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, stateful=True))(x)
+        x = tf.keras.layers.Flatten()(x)
+        # x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, stateful=True))(x)
         x = tf.keras.layers.Dropout(0.5)(x)
         x = tf.keras.layers.Dense(2)(x)
         model = tf.keras.models.Model(inputs=state_in, outputs=x)

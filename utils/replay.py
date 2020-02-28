@@ -8,7 +8,7 @@ class ReplayBuffer:
         self.buffer = deque(maxlen=buf_size)
 
     def get_batch(self, batch_size):
-        size = batch_size if len(self.buf_size) > batch_size else len(self.buf_size)
+        size = batch_size if len(self.buffer) > batch_size else len(self.buffer)
         return random.sample(self.buffer, size)
 
     def __len__(self):
