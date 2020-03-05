@@ -39,21 +39,32 @@ class Agent:
         while epoch < max_epochs:
             ob, _, target_video = self.env.reset()
             ep_reward = 0
+            buffer = [[], [], [], [], []]
             while True:
                 # TODO OU noise
                 ac = self.model.actor.predict(np.array([ob]))
                 next_ob, reward, done, _ = self.env.step(ac)
+
+                if done:
+                    if len(buffer[0]) != 0:
+                        self.replay_buffer.append(buffer)
+                    break
+
                 global_step += 1
                 # TODO replay buffer
                 if global_step >= 1000:
                     if global_step == 1000:
                         train_indicator = True
                         print("train start")
-                    transition = (ob, ac, reward, next_ob, done)
-                    self.replay_buffer.append(transition)
 
-                    batch = self.replay_buffer.get_batch(30)  # --> [30, :, :, :, :]
+                    batches = self.replay_buffer.get_batch(30)  # --> [30, :, :, :, :]
 
+                    for batch in batches:  # batch --> [5, 5, 5, 5, 5]
+                        o = np.asarray(batch[0])
+                        a = np.asarray(batch[1])
+                        r = np.asarray(batch[2])
+                        no = np.asarray(batch[3])
+                        d = np.asarray(batch[4])
                     obs = np.asarray([e[0] for e in batch])
                     acs = np.asarray([e[1] for e in batch]).reshape([-1, 2])
                     rewards = np.asarray([e[2] for e in batch]).reshape([-1, 1])
@@ -79,12 +90,16 @@ class Agent:
                         self.model.target_critic_train()
 
                 if np.shape(next_ob) == (6, 224, 224, 3):
+                    buffer[0].append(ob)
+                    buffer[1].append(ac)
+                    buffer[2].append(reward)
+                    buffer[3].append(next_ob)
+                    buffer[4].append(done)
+                    print(np.shape(buffer[0]), np.shape(buffer[1]), np.shape(buffer[3]))
                     transition = (ob, ac, reward, next_ob, done)
                     self.replay_buffer.append(transition)
                     ob = next_ob
 
-                if done:
-                    break
 
                 ep_reward += reward
             print("{}'s reward is {} # {}".format(target_video, ep_reward, global_step))
