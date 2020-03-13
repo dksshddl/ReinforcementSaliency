@@ -2,7 +2,9 @@ import os
 
 DDPG_MOBILE = "ddpg_mobile"
 DDPG_RESNET = "ddpg_resnet"
+DDPG_CONVLSTM = "ddpg_convLSTM"
 DDPG = "ddpg"
+
 
 # base dataset path
 base_path = os.path.join("C:", os.sep, "Users", "dkssh", "SaliencyData")
