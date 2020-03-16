@@ -10,8 +10,6 @@ from algo.ddpg import DDPG
 from utils import config
 from utils.replay import ReplayBuffer
 
-train_step = 0
-
 
 class Agent:
     def __init__(self, env, sess=None):
@@ -31,79 +29,52 @@ class Agent:
         self.model = DDPG(self.sess, state_dim, action_dim, action_max[0], action_min[0])
         self.replay_buffer = ReplayBuffer(3000)
         self.sess.run(tf.global_variables_initializer())
+        self.train_step = 0
 
     def train(self, max_epochs):
+        train_step = 0
         epoch = 0
         global_step = 0
+        steps = 0
         train_indicator = False
-        w = open(os.path.join("log", config.DDPG_MOBILE, "reward.txt"), "a")
+        w = open(os.path.join("log", config.DDPG_CONVLSTM, "reward.txt"), "a")
         while epoch < max_epochs:
-
-            if epoch >= 100 or len(self.replay_buffer) >= 2000:
-                pass
 
             ob, _, target_video = self.env.reset()
             ep_reward = 0
             buffer = [[], [], [], [], []]
             while True:
                 # TODO OU noise
+                if steps == 3000:
+                    train_indicator = True
+
                 ac = self.model.actor.predict(np.array([ob]))
                 next_ob, reward, done, _ = self.env.step(ac)
 
                 if done:
                     break
-
-                global_step += 1
-                # TODO replay buffer
-                if global_step >= 1000:
-                    if global_step == 1000:
-                        train_indicator = True
-                        print("train start")
-
-                    batches = self.replay_buffer.get_batch(15)  # --> [30, :, :, :, :]
-
-                    for batch in batches:  # batch --> [5, 5, 5, 5, 5]
-                        obs = np.asarray(batch[0])
-                        acs = np.asarray(batch[1])
-                        rewards = np.asarray(batch[2])
-                        next_obs = np.asarray(batch[3])
-                        dones = np.asarray(batch[4])
-                        y_t = np.copy(rewards)
-                        # print(np.shape(o), np.shape(a), np.shape(r), np.shape(no), np.shape(dones))
-                        target_q_value = self.model.target_critic.predict([next_obs, acs])
-                        for k in range(len(batch)):
-                            if dones[k]:
-                                y_t[k] = rewards[k]
-                            else:
-                                y_t[k] = rewards[k] + 0.99 * target_q_value[k]
-                        y_t = y_t.reshape([-1, 1])
-                        train_step += 1
-                        self.model.train_critic(obs, acs, y_t, train_step)
-                        a_for_grad = self.model.actor.predict(obs)
-                        grads = self.model.gradients(obs, a_for_grad)
-                        self.model.train_actor(obs, grads)
-                        self.model.target_actor_train()
-                        self.model.target_critic_train()
-
                 if np.shape(next_ob) == (6, 224, 224, 3):
                     buffer[0].append(ob)
                     buffer[1].append(ac[0])
                     buffer[2].append([reward])
                     buffer[3].append(next_ob)
                     buffer[4].append([done])
-                    # print(np.shape(buffer[0]), np.shape(buffer[1]), np.shape(buffer[3]))
-                    # transition = (ob, ac, reward, next_ob, done)
                     if len(buffer[0]) == 5:
                         self.replay_buffer.append(buffer)
                         buffer = [[], [], [], [], []]
                     ob = next_ob
+                    global_step += 1
+                    steps += 1
                 ep_reward += reward
-            print("{}'s reward is {} # {}".format(target_video, ep_reward, global_step))
 
+            print("{}'s reward is {} # {}".format(target_video, ep_reward, global_step))
+            w.write("{} {}\n".format(target_video, ep_reward))
             if train_indicator:
-                w.write("{} {}\n".format(target_video, ep_reward))
-            # self.model.reset_state()
-            if epoch is not 0 and epoch % 50 is 0:
+                print("start train")
+                self.update(100)
+                steps = 0
+                train_indicator = False
+            if epoch is not 0 and epoch % 25 is 0:
                 self.model.save(epoch)
 
             epoch += 1
@@ -129,33 +100,39 @@ class Agent:
                     ob = next_ob
                     ac = next_ac
 
-    def update(self):
-        global train_step
-        batches = self.replay_buffer.get_batch(15)  # --> [30, :, :, :, :]
+    def update(self, update_step):
+        for _ in range(update_step):
 
-        for batch in batches:  # batch --> [5, 5, 5, 5, 5]
-            obs = np.asarray(batch[0])
-            acs = np.asarray(batch[1])
-            rewards = np.asarray(batch[2])
-            next_obs = np.asarray(batch[3])
-            dones = np.asarray(batch[4])
-            y_t = np.copy(rewards)
-            # print(np.shape(o), np.shape(a), np.shape(r), np.shape(no), np.shape(dones))
-            target_q_value = self.model.target_critic.predict([next_obs, acs])
-            for k in range(len(batch)):
-                if dones[k]:
-                    y_t[k] = rewards[k]
-                else:
-                    y_t[k] = rewards[k] + 0.99 * target_q_value[k]
-            y_t = y_t.reshape([-1, 1])
-            self.model.train_critic(obs, acs, y_t, train_step)
-            a_for_grad = self.model.actor.predict(obs)
-            grads = self.model.gradients(obs, a_for_grad)
-            self.model.train_actor(obs, grads)
-            self.model.target_actor_train()
-            self.model.target_critic_train()
-            train_step += 1
+            batches = self.replay_buffer.get_batch(5)  # --> [30, :, :, :, :]
 
+            for batch in batches:  # batch --> [5, 5, 5, 5, 5]
+                obs = np.asarray(batch[0])
+                acs = np.asarray(batch[1])
+                rewards = np.asarray(batch[2])
+                next_obs = np.asarray(batch[3])
+                dones = np.asarray(batch[4])
+                y_t = np.copy(rewards)
+                # print(np.shape(obs), np.shape(a), np.shape(r), np.shape(no), np.shape(dones))
+                target_q_value = self.model.target_critic.predict([next_obs, acs])
+                for k in range(len(batch)):
+                    if dones[k]:
+                        y_t[k] = rewards[k]
+                    else:
+                        y_t[k] = rewards[k] + 0.99 * target_q_value[k]
+                y_t = y_t.reshape([-1, 1])
+
+                for o, a, r, no, d, yt in zip(obs, acs, rewards, next_obs, dones, y_t):
+                    self.train_step += 1
+                    self.model.train_critic(np.array([o]), np.array([a]), np.array([yt]), self.train_step)
+                    a_for_grad = self.model.actor.predict(np.array([o]))
+                    grads = self.model.gradients(np.array([o]), a_for_grad)
+                    self.model.train_actor(np.array([o]), grads)
+                    self.model.target_actor_train()
+                    self.model.target_critic_train()
+
+                self.model.reset_state()
+        self.model.save()
+        self.replay_buffer.clear()
 
 if __name__ == '__main__':
 

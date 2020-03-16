@@ -99,11 +99,14 @@ class DDPG:
     def predict(self, state):
         return self.actor.predict([state])
 
-    def save(self, epochs):
+    def save(self, epochs=None):
         model_save_path = os.path.join(weight_path, config.DDPG_CONVLSTM)
-        if not os.path.exists(model_save_path):
-            os.mkdir(model_save_path)
-        self.saver.save(self.sess, os.path.join(model_save_path, 'model_ddpg_' + str(epochs) + '.ckpt'))
+        if epochs is None:
+            self.saver.save(self.sess, os.path.join(model_save_path, 'model_ddpg' + '.ckpt'))
+        else:
+            if not os.path.exists(model_save_path):
+                os.mkdir(model_save_path)
+            self.saver.save(self.sess, os.path.join(model_save_path, 'model_ddpg_' + str(epochs) + '.ckpt'))
 
     def load(self, load_path):
         self.saver.restore(self.sess, load_path)
