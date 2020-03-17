@@ -2,7 +2,7 @@ import os
 
 DDPG_MOBILE = "ddpg_mobile"
 DDPG_RESNET = "ddpg_resnet"
-DDPG_CONVLSTM = "ddpg_convLSTM"
+DDPG_CONVLSTM = "ddpg_convLSTM2"
 DDPG = "ddpg"
 
 

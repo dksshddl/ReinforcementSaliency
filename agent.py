@@ -23,16 +23,14 @@ class Agent:
         action_max = env.action_space.high
         action_min = env.action_space.low
         if sess is None:
-            self.sess = tf.Session()
+            self.sess = tf.compat.v1.Session()
         else:
             self.sess = sess
         self.model = DDPG(self.sess, state_dim, action_dim, action_max[0], action_min[0])
-        self.replay_buffer = ReplayBuffer(3000)
-        self.sess.run(tf.global_variables_initializer())
+        self.replay_buffer = ReplayBuffer(1000)
         self.train_step = 0
 
     def train(self, max_epochs):
-        train_step = 0
         epoch = 0
         global_step = 0
         steps = 0
@@ -45,7 +43,7 @@ class Agent:
             buffer = [[], [], [], [], []]
             while True:
                 # TODO OU noise
-                if steps == 3000:
+                if steps == 1000:
                     train_indicator = True
 
                 ac = self.model.actor.predict(np.array([ob]))
@@ -71,7 +69,9 @@ class Agent:
             w.write("{} {}\n".format(target_video, ep_reward))
             if train_indicator:
                 print("start train")
-                self.update(100)
+                self.update(25)
+                self.model.save()
+                self.replay_buffer.clear()
                 steps = 0
                 train_indicator = False
             if epoch is not 0 and epoch % 25 is 0:
@@ -111,19 +111,15 @@ class Agent:
                 rewards = np.asarray(batch[2])
                 next_obs = np.asarray(batch[3])
                 dones = np.asarray(batch[4])
-                y_t = np.copy(rewards)
-                # print(np.shape(obs), np.shape(a), np.shape(r), np.shape(no), np.shape(dones))
-                target_q_value = self.model.target_critic.predict([next_obs, acs])
-                for k in range(len(batch)):
-                    if dones[k]:
-                        y_t[k] = rewards[k]
-                    else:
-                        y_t[k] = rewards[k] + 0.99 * target_q_value[k]
-                y_t = y_t.reshape([-1, 1])
 
-                for o, a, r, no, d, yt in zip(obs, acs, rewards, next_obs, dones, y_t):
+                for o, a, r, no, d in zip(obs, acs, rewards, next_obs, dones):
                     self.train_step += 1
-                    self.model.train_critic(np.array([o]), np.array([a]), np.array([yt]), self.train_step)
+                    next_action = self.model.target_actor.predict(np.array([no]))
+                    target_q = self.model.target_critic.predict([np.array([no]), np.array(next_action)])
+                    r, target_q = np.squeeze(r), np.squeeze(target_q)
+                    yt = r + 0.99 * target_q
+                    yt = np.reshape(yt, [-1, 1])
+                    self.model.train_critic(np.array([o]), np.array([a]), np.array(yt), self.train_step)
                     a_for_grad = self.model.actor.predict(np.array([o]))
                     grads = self.model.gradients(np.array([o]), a_for_grad)
                     self.model.train_actor(np.array([o]), grads)
@@ -131,8 +127,7 @@ class Agent:
                     self.model.target_critic_train()
 
                 self.model.reset_state()
-        self.model.save()
-        self.replay_buffer.clear()
+
 
 if __name__ == '__main__':
 

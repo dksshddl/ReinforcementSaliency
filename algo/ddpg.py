@@ -21,51 +21,53 @@ batch_size = 1
 class DDPG:
     def __init__(self, sess, state_dim, action_dim, action_max, action_min, load=None):
         self.sess = sess
+
         n_samples = 6
         self.state_dim = [n_samples] + state_dim  # [6, 224, 224, 3]
         self.action_dim = action_dim  # [2]
         self.action_max = float(action_max)
         self.action_min = float(action_min)
 
-        self.state_ph = tf.placeholder(dtype=tf.float32, shape=[batch_size] + self.state_dim)
-        self.reward_ph = tf.placeholder(dtype=tf.float32, shape=[batch_size, 1])
-        self.next_state_ph = tf.placeholder(dtype=tf.float32, shape=[batch_size] + self.state_dim)
-        self.action_ph = tf.placeholder(dtype=tf.float32, shape=[batch_size] + self.action_dim)
-        self.action_grad_ph = tf.placeholder(dtype=tf.float32, shape=[batch_size] + self.action_dim)
-        self.done_ph = tf.placeholder(dtype=tf.float32, shape=[batch_size, 1])
-        self.qvalue_ph = tf.placeholder(dtype=tf.float32, shape=[batch_size, 1])
+        self.state_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.state_dim)
+        self.reward_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
+        self.next_state_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.state_dim)
+        self.action_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.action_dim)
+        self.action_grad_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.action_dim)
+        self.done_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
+        self.qvalue_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
 
-        with tf.variable_scope('actor'):
+        with tf.compat.v1.variable_scope('actor'):
             # self.actor = self.generate_resnet_actor(trainable=True)
             self.actor = self.generate_actor_network(trainable=True)
-        with tf.variable_scope('target_actor'):
+        with tf.compat.v1.variable_scope('target_actor'):
             # self.target_actor = self.generate_resnet_actor(trainable=False)
             self.target_actor = self.generate_actor_network(trainable=False)
-        with tf.variable_scope('critic'):
+        with tf.compat.v1.variable_scope('critic'):
             # self.critic = self.generate_resnet_critic(trainable=True)
             self.critic = self.generate_critic_network(trainable=True)
-        with tf.variable_scope('target_critic'):
+        with tf.compat.v1.variable_scope('target_critic'):
             # self.target_critic = self.generate_resnet_critic(trainable=False)
             self.target_critic = self.generate_critic_network(trainable=False)
 
         self.actor.summary()
         self.critic.summary()
 
-        self.action_grad = tf.gradients(self.critic.output, self.critic.input[1])
-        self.params_grad = tf.gradients(self.actor.output, self.actor.trainable_weights, -self.action_grad_ph)
-        self.critic_loss = tf.losses.mean_squared_error(self.qvalue_ph, self.critic.output)
+        self.action_grad = tf.gradients(self.critic.output, self.critic.input[1])  # q_value, action
+        self.params_grad = tf.gradients(self.actor.output, self.actor.trainable_weights, -self.action_grad)
+        self.critic_loss = tf.compat.v1.losses.mean_squared_error(self.qvalue_ph, self.critic.output)
 
-        self.critic_opt = tf.train.AdamOptimizer(learning_rate=0.001).minimize(self.critic_loss)
-        self.optimize = tf.train.AdamOptimizer(learning_rate=0.001) \
+        self.critic_opt = tf.compat.v1.train.AdamOptimizer(learning_rate=lr_critic).minimize(self.critic_loss)
+        self.actor_opt = tf.compat.v1.train.AdamOptimizer(learning_rate=lr_actor) \
             .apply_gradients(zip(self.params_grad, self.actor.trainable_weights))
 
-        self.saver = tf.train.Saver()
+        self.sess.run(tf.compat.v1.global_variables_initializer())
+        self.saver = tf.compat.v1.train.Saver()
         writer_path = os.path.join(log_path, config.DDPG_CONVLSTM)
         if not os.path.exists(writer_path):
             os.mkdir(writer_path)
-        self.writer = tf.summary.FileWriter(writer_path, self.sess.graph)
-        self.sess.run(tf.global_variables_initializer())
-        self.critic_loss_summary = tf.summary.scalar("critic_loss", self.critic_loss)
+        self.writer = tf.compat.v1.summary.FileWriter(writer_path, self.sess.graph)
+        self.critic_loss_summary = tf.compat.v1.summary.scalar("critic_loss", self.critic_loss)
+
         if load is not None:
             self.load(load)
 
@@ -89,7 +91,7 @@ class DDPG:
 
     def train_actor(self, state, action_grads, step=None):
         feed_dict = {self.actor.inputs[0]: state, self.action_grad_ph: action_grads}
-        self.sess.run(self.optimize, feed_dict=feed_dict)
+        self.sess.run(self.actor_opt, feed_dict=feed_dict)
 
     def train_critic(self, state, action, q_value, step=None):
         feed_dict = {self.critic.inputs[0]: state, self.critic.inputs[1]: action, self.qvalue_ph: q_value}
@@ -101,11 +103,12 @@ class DDPG:
 
     def save(self, epochs=None):
         model_save_path = os.path.join(weight_path, config.DDPG_CONVLSTM)
+        if not os.path.exists(model_save_path):
+            os.mkdir(model_save_path)
+
         if epochs is None:
             self.saver.save(self.sess, os.path.join(model_save_path, 'model_ddpg' + '.ckpt'))
         else:
-            if not os.path.exists(model_save_path):
-                os.mkdir(model_save_path)
             self.saver.save(self.sess, os.path.join(model_save_path, 'model_ddpg_' + str(epochs) + '.ckpt'))
 
     def load(self, load_path):
@@ -115,8 +118,7 @@ class DDPG:
     def generate_critic_network(self, trainable):
         state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
         action_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.action_dim)
-        # x = tf.keras.layers.TimeDistributed(tf.keras.applications.ResNet50)
-        # mask = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(mask_value=256., trainable=trainable), trainable=trainable)(state_in)
+
         x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=True, stateful=True, trainable=trainable)(state_in)
         x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
         x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
@@ -125,18 +127,20 @@ class DDPG:
         x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
         x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False, stateful=True, trainable=trainable)(inputs=x)
         x = tf.keras.layers.Flatten(trainable=trainable)(x)
-        y = tf.keras.layers.Dense(64)(action_in)
-        y = tf.keras.layers.Dense(128)(y)
+        y = tf.keras.layers.Dense(128, activation="relu")(action_in)
+        y = tf.keras.layers.Dense(64, activation="relu")(y)
+        y = tf.keras.layers.Dense(32, activation="relu")(y)
         concat = tf.keras.layers.concatenate([x, y])
         x = tf.keras.layers.Dense(1, trainable=trainable)(concat)
+
         model = tf.keras.models.Model(inputs=[state_in, action_in], outputs=x)
-        model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.losses.mean_squared_error)
+        model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.compat.v1.losses.mean_squared_error)
         return model
 
     # action-value
     def generate_actor_network(self, trainable):
         state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
-        # mask = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(mask_value=256., trainable=trainable), trainable=trainable)(state_in)
+
         x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=True, stateful=True, trainable=trainable)(state_in)
         x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
         x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
@@ -146,6 +150,7 @@ class DDPG:
         x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False, stateful=True, trainable=trainable)(inputs=x)
         x = tf.keras.layers.Flatten(trainable=trainable)(x)
         x = tf.keras.layers.Dense(2, trainable=trainable)(x)
+
         model = tf.keras.models.Model(inputs=state_in, outputs=x)
         return model
 
@@ -162,7 +167,7 @@ class DDPG:
         x = tf.keras.layers.Dropout(0.5)(concat)
         x = tf.keras.layers.Dense(1, activation="linear")(x)
         model = tf.keras.models.Model(inputs=[state_in, action_in], outputs=x)
-        model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.losses.mean_squared_error)
+        model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.compat.v1.losses.mean_squared_error)
         return model
 
     def generate_resnet_actor(self, trainable):
