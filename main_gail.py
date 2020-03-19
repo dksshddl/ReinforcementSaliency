@@ -12,6 +12,8 @@ from algo.ppo import PPOTrain
 from utils import config
 
 
+def generator():
+    pass
 
 def argparser():
     parser = argparse.ArgumentParser()
@@ -79,7 +81,6 @@ def main(args=None):
                 else:
                     obs = next_obs
                     expert_acs = next_ea
-            print(np.shape(observations), np.shape(actions), np.shape(expert_observations), np.shape(expert_actions))
             writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag='episode_length', simple_value=run_policy_steps)])
                                , iteration)
             writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag='episode_reward', simple_value=sum(rewards))])
@@ -99,17 +100,23 @@ def main(args=None):
             # actions = np.array(actions).astype(dtype=np.int32)
 
             # train discriminator
-            for i in range(2):
-                D.train(expert_s=expert_observations,
-                        expert_a=expert_actions,
-                        agent_s=observations,
-                        agent_a=actions)
+            # for i in range(2):
+            for eo, ea, o, a in zip(expert_observations, expert_actions, observations, actions):
+                D.train(np.array([eo]), np.array([ea]), np.array([o]), np.array([a]))
+            # D.train(expert_s=expert_observations,
+            #         expert_a=expert_actions,
+            #         agent_s=observations,
+            #         agent_a=actions)
 
             # output of this discriminator is reward
-            d_rewards = D.get_rewards(agent_s=observations, agent_a=actions)
+            d_rewards = []
+            for i in range(len(observations)):
+                d_rewards.append(D.get_rewards(agent_s=observations, agent_a=actions))
             d_rewards = np.reshape(d_rewards, newshape=[-1]).astype(dtype=np.float32)
-
-            gaes = PPO.get_gaes(rewards=d_rewards, v_preds=v_preds, v_preds_next=v_preds_next)
+            gaes = []
+            for r, v, nv in zip(d_rewards, v_preds, v_preds_next):
+                gae = PPO.get_gaes(r, v, nv)
+                gaes.append(gae)
             gaes = np.array(gaes).astype(dtype=np.float32)
             # gaes = (gaes - gaes.mean()) / gaes.std()
             v_preds_next = np.array(v_preds_next).astype(dtype=np.float32)
@@ -117,11 +124,15 @@ def main(args=None):
             # train policy
             inp = [observations, actions, gaes, d_rewards, v_preds_next]
             PPO.assign_policy_parameters()
-            PPO.train(obs=observations,
-                      actions=actions,
-                      gaes=gaes,
-                      rewards=d_rewards,
-                      v_preds_next=v_preds_next)
+            for ob, ac, gae, dr, vp in zip(observations, actions, gaes, d_rewards, v_preds_next):
+                print(np.shape(ob), np.shape(ac), np.shape(gae), np.shape(dr), np.shape(vp))
+                PPO.train(np.array([ob]), np.array([ac]), np.array([gae]), np.array([dr]), np.array([vp]))
+
+            # PPO.train(obs=observations,
+            #           actions=actions,
+            #           gaes=gaes,
+            #           rewards=d_rewards,
+            #           v_preds_next=v_preds_next)
             # for epoch in range(6):
             #     sample_indices = np.random.randint(low=0, high=observations.shape[0],
             #                                        size=32)  # indices are in [low, high)

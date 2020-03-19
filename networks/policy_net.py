@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 batch_size = None
-n_samples = None
+n_samples = 8
 
 class Policy_net:
     def __init__(self, name: str, env):
@@ -17,16 +17,19 @@ class Policy_net:
             self.obs = tf.placeholder(dtype=tf.float32, shape=[batch_size] + [n_samples] + list(ob_space.shape), name='obs')
 
             with tf.variable_scope('policy_net'):
-                x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True)(self.obs)
-                x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True)(inputs=x)
-                x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(20, 5, return_sequences=True)(self.obs)
+                x = tf.keras.layers.BatchNormalization()(x)
+                x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=True)(inputs=x)
+                x = tf.keras.layers.BatchNormalization()(x)
                 x = tf.keras.layers.Flatten()(x)
+
                 self.act_probs = tf.keras.layers.Dense(2, activation="sigmoid")(x)
 
             with tf.variable_scope('value_net'):
-                x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True)(self.obs)
-                x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True)(inputs=x)
-                x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(20, 5, return_sequences=True)(self.obs)
+                x = tf.keras.layers.BatchNormalization()(x)
+                x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=True)(inputs=x)
+                x = tf.keras.layers.BatchNormalization()(x)
                 x = tf.keras.layers.Flatten()(x)
                 self.v_preds = tf.keras.layers.Dense(1, activation="linear")(x)
 
@@ -51,3 +54,4 @@ class Policy_net:
 
     def get_trainable_variables(self):
         return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope)
+

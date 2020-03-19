@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 batch_size = None
-n_sample = None
+n_sample = 8
 
 class Discriminator:
     def __init__(self, env):
@@ -45,11 +45,12 @@ class Discriminator:
             self.rewards = tf.log(tf.clip_by_value(prob_2, 1e-10, 1))  # log(P(expert|s,a)) larger is better for agent
 
     def construct_network(self, input_s, input_a):
-        x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True)(input_s)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False)(inputs=x)
+        x = tf.keras.layers.ConvLSTM2D(20, 5, return_sequences=True)(input_s)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=True)(inputs=x)
+        x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Flatten()(x)
-        y = tf.keras.layers.Dense(64, activation="relu")(input_a)
+        y = tf.keras.layers.Dense(512, activation="relu")(input_a)
         y = tf.keras.layers.Dense(32, activation="relu")(y)
         concat = tf.keras.layers.concatenate([x, y])
         prob = tf.keras.layers.Dense(1, activation="sigmoid")(concat)

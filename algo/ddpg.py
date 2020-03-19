@@ -12,7 +12,7 @@ gamma = 0.99  # reward discount factor
 
 lr_critic = 3e-3  # learning rate for the critic
 lr_actor = 1e-3  # learning rate for the actor
-batch_size = 1
+batch_size = None
 
 
 # tau = 1e-2  # soft target update rate
@@ -22,7 +22,7 @@ class DDPG:
     def __init__(self, sess, state_dim, action_dim, action_max, action_min, load=None):
         self.sess = sess
 
-        n_samples = 6
+        n_samples = None
         self.state_dim = [n_samples] + state_dim  # [6, 224, 224, 3]
         self.action_dim = action_dim  # [2]
         self.action_max = float(action_max)
@@ -37,17 +37,17 @@ class DDPG:
         self.qvalue_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
 
         with tf.compat.v1.variable_scope('actor'):
-            # self.actor = self.generate_resnet_actor(trainable=True)
-            self.actor = self.generate_actor_network(trainable=True)
+            self.actor = self.generate_resnet_actor(trainable=True)
+            # self.actor = self.generate_actor_network(trainable=True)
         with tf.compat.v1.variable_scope('target_actor'):
-            # self.target_actor = self.generate_resnet_actor(trainable=False)
-            self.target_actor = self.generate_actor_network(trainable=False)
+            self.target_actor = self.generate_resnet_actor(trainable=False)
+            # self.target_actor = self.generate_actor_network(trainable=False)
         with tf.compat.v1.variable_scope('critic'):
-            # self.critic = self.generate_resnet_critic(trainable=True)
-            self.critic = self.generate_critic_network(trainable=True)
+            self.critic = self.generate_resnet_critic(trainable=True)
+            # self.critic = self.generate_critic_network(trainable=True)
         with tf.compat.v1.variable_scope('target_critic'):
-            # self.target_critic = self.generate_resnet_critic(trainable=False)
-            self.target_critic = self.generate_critic_network(trainable=False)
+            self.target_critic = self.generate_resnet_critic(trainable=False)
+            # self.target_critic = self.generate_critic_network(trainable=False)
 
         self.actor.summary()
         self.critic.summary()
@@ -62,7 +62,7 @@ class DDPG:
 
         self.sess.run(tf.compat.v1.global_variables_initializer())
         self.saver = tf.compat.v1.train.Saver()
-        writer_path = os.path.join(log_path, config.DDPG_CONVLSTM)
+        writer_path = os.path.join(log_path, config.DDPG_RESNET)
         if not os.path.exists(writer_path):
             os.mkdir(writer_path)
         self.writer = tf.compat.v1.summary.FileWriter(writer_path, self.sess.graph)
@@ -102,7 +102,7 @@ class DDPG:
         return self.actor.predict([state])
 
     def save(self, epochs=None):
-        model_save_path = os.path.join(weight_path, config.DDPG_CONVLSTM)
+        model_save_path = os.path.join(weight_path, config.DDPG_RESNET)
         if not os.path.exists(model_save_path):
             os.mkdir(model_save_path)
 
@@ -119,13 +119,12 @@ class DDPG:
         state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
         action_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.action_dim)
 
-        x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=True, stateful=True, trainable=trainable)(state_in)
-        x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False, stateful=True, trainable=trainable)(inputs=x)
+        x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=True, trainable=trainable)(state_in)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.ConvLSTM2D(20, 3, return_sequences=True, trainable=trainable)(inputs=x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.ConvLSTM2D(10, 3, return_sequences=True, trainable=trainable)(inputs=x)
+        x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Flatten(trainable=trainable)(x)
         y = tf.keras.layers.Dense(128, activation="relu")(action_in)
         y = tf.keras.layers.Dense(64, activation="relu")(y)
@@ -141,13 +140,12 @@ class DDPG:
     def generate_actor_network(self, trainable):
         state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
 
-        x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=True, stateful=True, trainable=trainable)(state_in)
-        x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True, trainable=trainable)(inputs=x)
-        x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False, stateful=True, trainable=trainable)(inputs=x)
+        x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=True, trainable=trainable)(state_in)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.ConvLSTM2D(20, 3, return_sequences=True, trainable=trainable)(inputs=x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.ConvLSTM2D(10, 3, return_sequences=True, trainable=trainable)(inputs=x)
+        x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Flatten(trainable=trainable)(x)
         x = tf.keras.layers.Dense(2, trainable=trainable)(x)
 
@@ -155,14 +153,20 @@ class DDPG:
         return model
 
     def generate_resnet_critic(self, trainable):
-        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
-        action_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.action_dim)
-        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
-        x = tf.keras.layers.TimeDistributed(feature)(state_in)
+        state_in = tf.keras.layers.Input(shape=self.state_dim)
+        action_in = tf.keras.layers.Input(shape=self.action_dim)
+        # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
+        x = tf.keras.models.Sequential()
+        x.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.BatchNormalization())
+        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.BatchNormalization())
+        x.add(tf.keras.layers.Conv2D(16, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.BatchNormalization())
+        x = tf.keras.layers.TimeDistributed(x)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         # x = tf.keras.layers.LSTM(50)(x)
-        x = tf.keras.layers.Flatten()(x)
-        # x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, stateful=True))(x)
+        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64))(x)
         y = tf.keras.layers.Dense(128)(action_in)
         y = tf.keras.layers.Dense(64)(action_in)
         y = tf.keras.layers.Dense(32)(action_in)
@@ -174,12 +178,20 @@ class DDPG:
         return model
 
     def generate_resnet_actor(self, trainable):
-        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
-        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
-        x = tf.keras.layers.TimeDistributed(feature)(state_in)
+        state_in = tf.keras.layers.Input(shape=self.state_dim)
+        # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
+        x = tf.keras.models.Sequential()
+        x.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.BatchNormalization())
+        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.BatchNormalization())
+        x.add(tf.keras.layers.Conv2D(16, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.BatchNormalization())
+
+        x = tf.keras.layers.TimeDistributed(x)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         # x = tf.keras.layers.LSTM(50)(x)
-        # x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64, stateful=True))(x)
+        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64))(x)
         # x = tf.keras.layers.Dropout(0.5)(x)
         x = tf.keras.layers.Dense(2, activation="linear")(x)
         model = tf.keras.models.Model(inputs=state_in, outputs=x)
