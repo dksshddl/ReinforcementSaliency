@@ -62,7 +62,7 @@ class DDPG:
 
         self.sess.run(tf.compat.v1.global_variables_initializer())
         self.saver = tf.compat.v1.train.Saver()
-        writer_path = os.path.join(log_path, config.DDPG_RESNET)
+        writer_path = os.path.join(log_path, config.DDPG_CONVLSTM)
         if not os.path.exists(writer_path):
             os.mkdir(writer_path)
         self.writer = tf.compat.v1.summary.FileWriter(writer_path, self.sess.graph)
@@ -102,7 +102,7 @@ class DDPG:
         return self.actor.predict([state])
 
     def save(self, epochs=None):
-        model_save_path = os.path.join(weight_path, config.DDPG_RESNET)
+        model_save_path = os.path.join(weight_path, config.DDPG_CONVLSTM)
         if not os.path.exists(model_save_path):
             os.mkdir(model_save_path)
 

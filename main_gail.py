@@ -1,10 +1,16 @@
 import argparse
+import os
+
 import gym
 import numpy as np
 import tensorflow as tf
+
+from custom_env.envs import CustomEnv
 from networks.policy_net import Policy_net
 from networks.discriminator import Discriminator
 from algo.ppo import PPOTrain
+from utils import config
+
 
 
 def argparser():
@@ -16,30 +22,51 @@ def argparser():
     return parser.parse_args()
 
 
-def main(args):
-    env = gym.make('CartPole-v0')
-    env.seed(0)
+def main(args=None):
+    env = CustomEnv()
+
     ob_space = env.observation_space
     Policy = Policy_net('policy', env)
     Old_Policy = Policy_net('old_policy', env)
-    PPO = PPOTrain(Policy, Old_Policy, gamma=args.gamma)
+    PPO = PPOTrain(Policy, Old_Policy, 0.95)
     D = Discriminator(env)
 
-    expert_observations = np.genfromtxt('trajectory/observations.csv')
-    expert_actions = np.genfromtxt('trajectory/actions.csv', dtype=np.int32)
+    expert_observations, expert_actions = [], []
+
+    ob, ac, target_video = env.reset(trajectory=True)
+
+    while True:
+        next_ob, reward, done, next_ac = env.step(ac)
+        expert_observations.append(ob)
+        expert_actions.append(ac)
+        if done:
+            break
+        ob = next_ob
+        ac = next_ac
 
     saver = tf.train.Saver()
+    logdir = os.path.join(config.log_path, config.GAIL)
+    savedir = os.path.join(config.weight_path, config.GAIL)
+
+    if not os.path.exists(logdir):
+        os.mkdir(logdir)
+    if not os.path.exists(savedir):
+        os.mkdir(savedir)
 
     with tf.Session() as sess:
-        writer = tf.summary.FileWriter(args.logdir, sess.graph)
+        writer = tf.summary.FileWriter(logdir, sess.graph)
         sess.run(tf.global_variables_initializer())
 
-        obs = env.reset()
         success_num = 0
 
-        for iteration in range(args.iteration):
+        for iteration in range(10_000):
+
+            obs, expert_acs, target_video = env.reset(trajectory=True)
+
             observations = []
             actions = []
+            expert_observations, expert_actions = [], []
+
             # do NOT use rewards to update policy
             rewards = []
             v_preds = []
@@ -51,8 +78,10 @@ def main(args):
 
                 act = np.asscalar(act)
                 v_pred = np.asscalar(v_pred)
-                next_obs, reward, done, info = env.step(act)
+                next_obs, reward, done, next_ea = env.step(expert_acs)
 
+                expert_observations.append(obs)
+                expert_actions.append(expert_acs)
                 observations.append(obs)
                 actions.append(act)
                 rewards.append(reward)
@@ -62,11 +91,12 @@ def main(args):
                     next_obs = np.stack([next_obs]).astype(dtype=np.float32)  # prepare to feed placeholder Policy.obs
                     _, v_pred = Policy.act(obs=next_obs, stochastic=True)
                     v_preds_next = v_preds[1:] + [np.asscalar(v_pred)]
-                    obs = env.reset()
                     break
                 else:
                     obs = next_obs
+                    expert_acs = next_ea
 
+            print(np.shape(observations), np.shape(actions), np.shape(expert_observations), np.shape(expert_actions))
             writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag='episode_length', simple_value=run_policy_steps)])
                                , iteration)
             writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag='episode_reward', simple_value=sum(rewards))])
@@ -75,7 +105,7 @@ def main(args):
             if sum(rewards) >= 195:
                 success_num += 1
                 if success_num >= 100:
-                    saver.save(sess, args.savedir + '/model.ckpt')
+                    saver.save(sess, savedir + '/model.ckpt')
                     print('Clear!! Model saved.')
                     break
             else:
@@ -125,5 +155,4 @@ def main(args):
 
 
 if __name__ == '__main__':
-    args = argparser()
-    main(args)
+    main()

@@ -5,6 +5,7 @@ DDPG_RESNET = "ddpg_resnet"
 DDPG_CONVLSTM = "ddpg_convLSTM2"
 DDPG = "ddpg"
 
+GAIL = "gail"
 
 # base dataset path
 base_path = os.path.join("C:", os.sep, "Users", "dkssh", "SaliencyData")

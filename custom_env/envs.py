@@ -70,20 +70,20 @@ class CustomEnv(gym.Env):
             assert len(self.observation) == len(saliency_observation)
 
             total_sum = np.sum(self.saliency[start_frame - 1:end_frame])
-            observation = self.observation.copy()
+            #observation = self.observation.copy()
 
-            if len(observation) > 6:
-                observation = observation[:6]
-            elif len(observation) < 6:
-                embed = np.zeros(shape=(width, height, n_channels))
-                for _ in range(n_samples - len(observation)):
-                    observation = np.concatenate([observation, [embed]])
-            assert len(observation) == n_samples
+            #if len(observation) > 6:
+            #    observation = observation[:6]
+            #elif len(observation) < 6:
+            #    embed = np.zeros(shape=(width, height, n_channels))
+            #    for _ in range(n_samples - len(observation)):
+            #        observation = np.concatenate([observation, [embed]])
+            #assert len(observation) == n_samples
 
             observation_sum = np.sum(saliency_observation)
             reward = observation_sum / total_sum
 
-            return observation, reward, done, y_data
+            return self.observation, reward, done, y_data
         else:
             self.view.move(action)
             self.saliency_view.move(action)
@@ -130,15 +130,15 @@ class CustomEnv(gym.Env):
         if self.trajectory:
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
                                 self.video[start_frame - 1:end_frame]]
-            observation = self.observation.copy()
-            if len(observation) > 6:
-                observation = observation[:6]
-            elif len(observation) < 6:
-                embed = np.zeros(shape=(width, height, n_channels))
-                for _ in range(n_samples - len(observation)):
-                    observation = np.concatenate([observation, [embed]])
-            assert len(observation) == n_samples
-            return observation, y_data, self.target_video
+            #observation = self.observation.copy()
+            #if len(observation) > 6:
+            #    observation = observation[:6]
+            #elif len(observation) < 6:
+            #    embed = np.zeros(shape=(width, height, n_channels))
+            #    for _ in range(n_samples - len(observation)):
+            #        observation = np.concatenate([observation, [embed]])
+            #assert len(observation) == n_samples
+            return self.observation, y_data, self.target_video
         else:
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
                                 self.video[self.time_step:self.time_step + frame_step]]
