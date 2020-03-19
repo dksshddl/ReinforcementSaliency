@@ -31,19 +31,6 @@ def main(args=None):
     PPO = PPOTrain(Policy, Old_Policy, 0.95)
     D = Discriminator(env)
 
-    expert_observations, expert_actions = [], []
-
-    ob, ac, target_video = env.reset(trajectory=True)
-
-    while True:
-        next_ob, reward, done, next_ac = env.step(ac)
-        expert_observations.append(ob)
-        expert_actions.append(ac)
-        if done:
-            break
-        ob = next_ob
-        ac = next_ac
-
     saver = tf.train.Saver()
     logdir = os.path.join(config.log_path, config.GAIL)
     savedir = os.path.join(config.weight_path, config.GAIL)
@@ -73,29 +60,25 @@ def main(args=None):
             run_policy_steps = 0
             while True:
                 run_policy_steps += 1
-                obs = np.stack([obs]).astype(dtype=np.float32)  # prepare to feed placeholder Policy.obs
-                act, v_pred = Policy.act(obs=obs, stochastic=True)
+                act, v_pred = Policy.act(obs=np.array([obs]), stochastic=True)
 
-                act = np.asscalar(act)
-                v_pred = np.asscalar(v_pred)
+                v_pred = v_pred.item()
                 next_obs, reward, done, next_ea = env.step(expert_acs)
 
-                expert_observations.append(obs)
+                expert_observations.append(np.array(obs))
                 expert_actions.append(expert_acs)
-                observations.append(obs)
+                observations.append(np.array(obs))
                 actions.append(act)
                 rewards.append(reward)
                 v_preds.append(v_pred)
 
                 if done:
-                    next_obs = np.stack([next_obs]).astype(dtype=np.float32)  # prepare to feed placeholder Policy.obs
-                    _, v_pred = Policy.act(obs=next_obs, stochastic=True)
-                    v_preds_next = v_preds[1:] + [np.asscalar(v_pred)]
+                    _, v_pred = Policy.act(obs=np.array([next_obs]), stochastic=True)
+                    v_preds_next = v_preds[1:] + [v_pred.item()]
                     break
                 else:
                     obs = next_obs
                     expert_acs = next_ea
-
             print(np.shape(observations), np.shape(actions), np.shape(expert_observations), np.shape(expert_actions))
             writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag='episode_length', simple_value=run_policy_steps)])
                                , iteration)
@@ -112,8 +95,8 @@ def main(args=None):
                 success_num = 0
 
             # convert list to numpy array for feeding tf.placeholder
-            observations = np.reshape(observations, newshape=[-1] + list(ob_space.shape))
-            actions = np.array(actions).astype(dtype=np.int32)
+            # observations = np.reshape(observations, newshape=[-1] + list(ob_space.shape))
+            # actions = np.array(actions).astype(dtype=np.int32)
 
             # train discriminator
             for i in range(2):
@@ -134,15 +117,20 @@ def main(args=None):
             # train policy
             inp = [observations, actions, gaes, d_rewards, v_preds_next]
             PPO.assign_policy_parameters()
-            for epoch in range(6):
-                sample_indices = np.random.randint(low=0, high=observations.shape[0],
-                                                   size=32)  # indices are in [low, high)
-                sampled_inp = [np.take(a=a, indices=sample_indices, axis=0) for a in inp]  # sample training data
-                PPO.train(obs=sampled_inp[0],
-                          actions=sampled_inp[1],
-                          gaes=sampled_inp[2],
-                          rewards=sampled_inp[3],
-                          v_preds_next=sampled_inp[4])
+            PPO.train(obs=observations,
+                      actions=actions,
+                      gaes=gaes,
+                      rewards=d_rewards,
+                      v_preds_next=v_preds_next)
+            # for epoch in range(6):
+            #     sample_indices = np.random.randint(low=0, high=observations.shape[0],
+            #                                        size=32)  # indices are in [low, high)
+            #     sampled_inp = [np.take(a=a, indices=sample_indices, axis=0) for a in inp]  # sample training data
+            #     PPO.train(obs=sampled_inp[0],
+            #               actions=sampled_inp[1],
+            #               gaes=sampled_inp[2],
+            #               rewards=sampled_inp[3],
+            #               v_preds_next=sampled_inp[4])
 
             summary = PPO.get_summary(obs=inp[0],
                                       actions=inp[1],

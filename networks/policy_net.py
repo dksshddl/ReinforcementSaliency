@@ -1,5 +1,7 @@
 import tensorflow as tf
 
+batch_size = None
+n_samples = None
 
 class Policy_net:
     def __init__(self, name: str, env):
@@ -12,24 +14,24 @@ class Policy_net:
         act_space = env.action_space
 
         with tf.variable_scope(name):
-            self.obs = tf.placeholder(dtype=tf.float32, shape=[None] + list(ob_space.shape), name='obs')
+            self.obs = tf.placeholder(dtype=tf.float32, shape=[batch_size] + [n_samples] + list(ob_space.shape), name='obs')
 
             with tf.variable_scope('policy_net'):
-                x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True, stateful=True)(self.obs)
-                x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True)(inputs=x)
-                x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False, stateful=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True)(self.obs)
+                x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False)(inputs=x)
                 x = tf.keras.layers.Flatten()(x)
-                self.act_probs = tf.keras.layers.Dense(act_space.n, activation="sigmoid")(x)
+                self.act_probs = tf.keras.layers.Dense(2, activation="sigmoid")(x)
 
             with tf.variable_scope('value_net'):
-                x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True, stateful=True)(self.obs)
-                x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True, stateful=True)(inputs=x)
-                x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False, stateful=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(128, 5, return_sequences=True)(self.obs)
+                x = tf.keras.layers.ConvLSTM2D(64, 5, return_sequences=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(32, 5, return_sequences=False)(inputs=x)
                 x = tf.keras.layers.Flatten()(x)
                 self.v_preds = tf.keras.layers.Dense(1, activation="linear")(x)
 
-            self.act_stochastic = tf.multinomial(tf.log(self.act_probs), num_samples=1)
-            self.act_stochastic = tf.reshape(self.act_stochastic, shape=[-1])
+            self.act_stochastic = tf.multinomial(tf.log(self.act_probs), num_samples=2)
+            self.act_stochastic = tf.reshape(self.act_stochastic, shape=[2])
 
             self.act_deterministic = tf.argmax(self.act_probs, axis=1)
 

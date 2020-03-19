@@ -8,7 +8,7 @@ from utils.binary import *
 from utils.config import *
 from utils.replay import ReplayBuffer
 
-n_samples = 6
+n_samples = 8
 width = 224
 height = 224
 n_channels = 3
@@ -38,6 +38,7 @@ class CustomEnv(gym.Env):
         self.saliency_info = get_SalMap_info()
         self.set_dataset(video_type)
         self.start_frame, self.end_frame = None, None
+
     def set_dataset(self, video_type="train"):
         if video_type == "train":
             self.x_dict, self.y_dict = self.train
@@ -60,7 +61,6 @@ class CustomEnv(gym.Env):
         self.start_frame, self.end_frame = start_frame, end_frame
         if self.trajectory:
             self.inference_view.move(action)
-            print(action, self.inference_view.center)
             self.view.set_center((lat, lng), normalize=True)
             self.saliency_view.set_center((lat, lng), normalize=True)
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
@@ -70,20 +70,20 @@ class CustomEnv(gym.Env):
             assert len(self.observation) == len(saliency_observation)
 
             total_sum = np.sum(self.saliency[start_frame - 1:end_frame])
-            #observation = self.observation.copy()
+            observation = self.observation.copy()
 
-            #if len(observation) > 6:
-            #    observation = observation[:6]
-            #elif len(observation) < 6:
-            #    embed = np.zeros(shape=(width, height, n_channels))
-            #    for _ in range(n_samples - len(observation)):
-            #        observation = np.concatenate([observation, [embed]])
-            #assert len(observation) == n_samples
+            if len(observation) > n_samples:
+                observation = observation[:n_samples]
+            elif len(observation) < n_samples:
+                embed = np.zeros(shape=(width, height, n_channels))
+                for _ in range(n_samples - len(observation)):
+                    observation = np.concatenate([observation, [embed]])
+            assert len(observation) == n_samples
 
             observation_sum = np.sum(saliency_observation)
             reward = observation_sum / total_sum
 
-            return self.observation, reward, done, y_data
+            return observation, reward, done, y_data
         else:
             self.view.move(action)
             self.saliency_view.move(action)
@@ -126,19 +126,19 @@ class CustomEnv(gym.Env):
         self.start_frame, self.end_frame = start_frame, end_frame
         self.view.set_center((lat, lng), normalize=True)
         self.inference_view = Viewport(self.width, self.height)
-        self.inference_view.set_center((lat,lng), normalize=True)
+        self.inference_view.set_center((lat, lng), normalize=True)
         if self.trajectory:
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
                                 self.video[start_frame - 1:end_frame]]
-            #observation = self.observation.copy()
-            #if len(observation) > 6:
-            #    observation = observation[:6]
-            #elif len(observation) < 6:
-            #    embed = np.zeros(shape=(width, height, n_channels))
-            #    for _ in range(n_samples - len(observation)):
-            #        observation = np.concatenate([observation, [embed]])
-            #assert len(observation) == n_samples
-            return self.observation, y_data, self.target_video
+            observation = self.observation.copy()
+            if len(observation) > n_samples:
+                observation = observation[:n_samples]
+            elif len(observation) < n_samples:
+                embed = np.zeros(shape=(width, height, n_channels))
+                for _ in range(n_samples - len(observation)):
+                    observation = np.concatenate([observation, [embed]])
+            assert len(observation) == n_samples
+            return observation, y_data, self.target_video
         else:
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
                                 self.video[self.time_step:self.time_step + frame_step]]
@@ -147,27 +147,39 @@ class CustomEnv(gym.Env):
     def render(self, mode='viewport', writer=None):
         if mode == 'viewport':
             if self.trajectory:
-                tmp = self.video[self.start_frame-1:self.end_frame]
+                tmp = self.video[self.start_frame - 1:self.end_frame]
+                infer_rec = self.inference_view.get_rectangle_point()
+                rec = self.view.get_rectangle_point()
+                for f in tmp:
+                    if len(rec) == 2:
+                        f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)
+                    elif len(rec) == 4:
+                        f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)  # left rectangle
+                        f = cv2.rectangle(f, rec[2], rec[3], (0, 0, 255), thickness=5)  # right rectangl
+                    if len(infer_rec) == 2:
+                        f = cv2.rectangle(f, infer_rec[0], infer_rec[1], (0, 255, 0), thickness=5)
+                    elif len(infer_rec) == 4:
+                        f = cv2.rectangle(f, infer_rec[2], infer_rec[3], (0, 255, 0), thickness=5)
+                        f = cv2.rectangle(f, infer_rec[0], infer_rec[1], (0, 255, 0), thickness=5)
+
+                    if writer is not None:
+                        writer.write(f)
+                    else:
+                        cv2.imshow("render", f)
             else:
                 tmp = self.video[self.time_step:self.time_step + frame_step]
-            rec = self.view.get_rectangle_point()
-            infer_rec = self.inference_view.get_rectangle_point()
-            for f in tmp:
-                if len(rec) == 2:
-                    f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)
-                elif len(rec) == 4:
-                    f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)  # left rectangle
-                    f = cv2.rectangle(f, rec[2], rec[3], (0, 0, 255), thickness=5)  # right rectangl
-                if len(infer_rec) == 2:
-                    f = cv2.rectangle(f, infer_rec[0], infer_rec[1], (0, 255, 0), thickness=5)
-                elif len(infer_rec) == 4:
-                    f = cv2.rectangle(f, infer_rec[2], infer_rec[3], (0, 255, 0), thickness=5)
-                    f = cv2.rectangle(f, infer_rec[0], infer_rec[1], (0, 255, 0), thickness=5)
+                rec = self.view.get_rectangle_point()
+                for f in tmp:
+                    if len(rec) == 2:
+                        f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)
+                    elif len(rec) == 4:
+                        f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)  # left rectangle
+                        f = cv2.rectangle(f, rec[2], rec[3], (0, 0, 255), thickness=5)  # right rectangl
+                    if writer is not None:
+                        writer.write(f)
+                    else:
+                        cv2.imshow("render", f)
 
-                if writer is not None:
-                    writer.write(f)
-                else:
-                    cv2.imshow("render", f)
         else:
             for f in self.observation:
                 if writer is not None:
