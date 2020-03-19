@@ -76,28 +76,29 @@ class Viewport:
     def get_rectangle_point(self):
         # form --> (x1, y1), (x2, y2)
         if self.view is not None:
-            return [(self.view[0], self.view[2], self.view[1], self.view[3])]
+            # start, end
+            return [(self.view[0], self.view[2]), (self.view[1], self.view[3])]
         else:
             l = self.view_dict["left"]
             r = self.view_dict["right"]
-            l_rec = (l[0], l[2], l[1], l[3])
-            r_rec = (r[0], r[2], r[1], r[3])
-            return l_rec, r_rec
+            return [(l[0], l[2]), (l[1], l[3]), (r[0], r[2]), (r[1], r[3])] # l_start, l_end, r_start, r_end
 
     # move --> [x,x] 2x1 vector
     def move(self, v):
-        v = np.reshape(v, [2])
-        v[0], v[1] = v[0] * self.VIDEO_WIDTH, v[1] * self.VIDEO_HEIGHT
-        self.center[0] += v[0]
-        self.center[1] += v[1]
+        if np.shape(v) == (2,):
+            pass
+        else:
+            v = np.reshape(v, [2])
+        self.center[0] += v[0] * self.VIDEO_WIDTH
+        self.center[1] += v[1] * self.VIDEO_HEIGHT
         self.update()
         self._build_view()
 
     def update(self):
         if self.center[0] < 0:
-            self.center[0] += self.VIDEO_WIDTH
+            self.center[0] += abs(self.center[0] // self.VIDEO_WIDTH) * self.VIDEO_WIDTH
         elif self.center[0] > self.VIDEO_WIDTH:
-            self.center[0] -= self.center[0]
+            self.center[0] -= (self.center[0] // self.VIDEO_WIDTH) * self.VIDEO_WIDTH
 
         if self.center[1] < 0:
             self.center[1] = 0

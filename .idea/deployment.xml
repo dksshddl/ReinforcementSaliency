@@ -2,17 +2,10 @@
 <project version="4">
   <component name="PublishConfigData">
     <serverData>
-      <paths name="Copy of project-level server 'btl'">
+      <paths name="btl@117.17.184.16:22">
         <serverdata>
           <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-      <paths name="btl">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/btl/PycharmProjects/ReinforcementSaliency" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/PycharmProjects/ReinforcementSaliency" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

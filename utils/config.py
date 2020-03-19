@@ -22,8 +22,9 @@ scanpaths_HE_R_path = os.path.join(base_path, "dataset", "HE", "Scanpaths", "R")
 video_path = os.path.join(base_path, "sample_videos")
 
 # log, weight path
-log_path = os.path.join("./log")
-weight_path = os.path.join("./weights")
+log_path = os.path.join("log")
+weight_path = os.path.join("weights")
+output_path = os.path.join("output_video")
 
 fps = {
     "01_PortoRiverside.mp4": 25,

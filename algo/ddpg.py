@@ -53,7 +53,7 @@ class DDPG:
         self.critic.summary()
 
         self.action_grad = tf.gradients(self.critic.output, self.critic.input[1])  # q_value, action
-        self.params_grad = tf.gradients(self.actor.output, self.actor.trainable_weights, -self.action_grad)
+        self.params_grad = tf.gradients(self.actor.output, self.actor.trainable_weights, -self.action_grad_ph)
         self.critic_loss = tf.compat.v1.losses.mean_squared_error(self.qvalue_ph, self.critic.output)
 
         self.critic_opt = tf.compat.v1.train.AdamOptimizer(learning_rate=lr_critic).minimize(self.critic_loss)
@@ -191,6 +191,9 @@ class DDPG:
     def load_weights(self, actor_path, critic_path):
         self.actor.load_weights(actor_path)
         self.critic.load_weights(critic_path)
+
+    def load_all(self, path):
+        self.saver.restore(self.sess, path)
 
     def reset_state(self):
         self.actor.reset_states()

@@ -6,8 +6,9 @@ from gym import spaces
 from dataset import *
 from utils.binary import *
 from utils.config import *
+from utils.replay import ReplayBuffer
 
-n_samples = 8
+n_samples = 6
 width = 224
 height = 224
 n_channels = 3
@@ -36,7 +37,7 @@ class CustomEnv(gym.Env):
         self.time_step = 0
         self.saliency_info = get_SalMap_info()
         self.set_dataset(video_type)
-
+        self.start_frame, self.end_frame = None, None
     def set_dataset(self, video_type="train"):
         if video_type == "train":
             self.x_dict, self.y_dict = self.train
@@ -55,9 +56,11 @@ class CustomEnv(gym.Env):
         x_data, y_data = next(self.x_iter), next(self.y_iter)
         step_idx, lat, lng, start_frame, end_frame = int(x_data[0]), x_data[2], x_data[1], int(x_data[5]), int(
             x_data[6])
-        done = True if step_idx == 99 else False
-
+        done = True if int(step_idx) == 99 else False
+        self.start_frame, self.end_frame = start_frame, end_frame
         if self.trajectory:
+            self.inference_view.move(action)
+            print(action, self.inference_view.center)
             self.view.set_center((lat, lng), normalize=True)
             self.saliency_view.set_center((lat, lng), normalize=True)
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
@@ -68,9 +71,13 @@ class CustomEnv(gym.Env):
 
             total_sum = np.sum(self.saliency[start_frame - 1:end_frame])
             observation = self.observation.copy()
-            embed = np.zeros(shape=(width, height, n_channels)) + 256.
-            for _ in range(n_samples - len(observation)):
-                observation = np.concatenate([observation, [embed]])
+
+            if len(observation) > 6:
+                observation = observation[:6]
+            elif len(observation) < 6:
+                embed = np.zeros(shape=(width, height, n_channels))
+                for _ in range(n_samples - len(observation)):
+                    observation = np.concatenate([observation, [embed]])
             assert len(observation) == n_samples
 
             observation_sum = np.sum(saliency_observation)
@@ -80,15 +87,14 @@ class CustomEnv(gym.Env):
         else:
             self.view.move(action)
             self.saliency_view.move(action)
-            self.view.set_center((lat, lng), normalize=True)
-            self.saliency_view.set_center((lat, lng), normalize=True)
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
-                                self.video[self.time_step:self.time_step+frame_step]]
+                                self.video[self.time_step:self.time_step + frame_step]]
             if len(self.observation) < frame_step:
                 return None, None, True, None
             else:
-                saliency_observation = [self.saliency_view.get_view(f) for f in self.saliency[self.time_step:self.time_step+frame_step]]
-                total_sum = np.sum(self.saliency[self.time_step:self.time_step+frame_step])
+                saliency_observation = [self.saliency_view.get_view(f) for f in
+                                        self.saliency[self.time_step:self.time_step + frame_step]]
+                total_sum = np.sum(self.saliency[self.time_step:self.time_step + frame_step])
                 observation_sum = np.sum(saliency_observation)
                 reward = observation_sum / total_sum
                 self.time_step += frame_step
@@ -117,38 +123,87 @@ class CustomEnv(gym.Env):
         self.x_iter, self.y_iter = iter(ran_x), iter(ran_y)
         x_data, y_data = next(self.x_iter), next(self.y_iter)
         lat, lng, start_frame, end_frame = x_data[2], x_data[1], int(x_data[5]), int(x_data[6])
+        self.start_frame, self.end_frame = start_frame, end_frame
         self.view.set_center((lat, lng), normalize=True)
+        self.inference_view = Viewport(self.width, self.height)
+        self.inference_view.set_center((lat,lng), normalize=True)
         if self.trajectory:
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
                                 self.video[start_frame - 1:end_frame]]
-            embed = np.zeros(shape=(width, height, n_channels)) + 256.
             observation = self.observation.copy()
-            for _ in range(n_samples - len(observation)):
-                observation = np.concatenate([observation, [embed]])
+            if len(observation) > 6:
+                observation = observation[:6]
+            elif len(observation) < 6:
+                embed = np.zeros(shape=(width, height, n_channels))
+                for _ in range(n_samples - len(observation)):
+                    observation = np.concatenate([observation, [embed]])
             assert len(observation) == n_samples
             return observation, y_data, self.target_video
         else:
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
-                                self.video[self.time_step:self.time_step+frame_step]]
+                                self.video[self.time_step:self.time_step + frame_step]]
             return self.observation, y_data, self.target_video
 
-    def render(self, mode='human'):
-        for f in self.observation:
-            cv2.imshow("render", f)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+    def render(self, mode='viewport', writer=None):
+        if mode == 'viewport':
+            if self.trajectory:
+                tmp = self.video[self.start_frame-1:self.end_frame]
+            else:
+                tmp = self.video[self.time_step:self.time_step + frame_step]
+            rec = self.view.get_rectangle_point()
+            infer_rec = self.inference_view.get_rectangle_point()
+            for f in tmp:
+                if len(rec) == 2:
+                    f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)
+                elif len(rec) == 4:
+                    f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)  # left rectangle
+                    f = cv2.rectangle(f, rec[2], rec[3], (0, 0, 255), thickness=5)  # right rectangl
+                if len(infer_rec) == 2:
+                    f = cv2.rectangle(f, infer_rec[0], infer_rec[1], (0, 255, 0), thickness=5)
+                elif len(infer_rec) == 4:
+                    f = cv2.rectangle(f, infer_rec[2], infer_rec[3], (0, 255, 0), thickness=5)
+                    f = cv2.rectangle(f, infer_rec[0], infer_rec[1], (0, 255, 0), thickness=5)
+
+                if writer is not None:
+                    writer.write(f)
+                else:
+                    cv2.imshow("render", f)
+        else:
+            for f in self.observation:
+                if writer is not None:
+                    writer.write(f)
+                else:
+                    cv2.imshow("render", f)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
 
 
 def ttest(max_epochs=0):
     env = CustomEnv()
     epoch = 0
+    s = (6, 224, 224, 3)
+
+    buffer = ReplayBuffer(3000)
+
     while epoch < max_epochs:
         obs, acs, next_obs, rewards, dones = [], [], [], [], []
         ob, ac, target_video = env.reset(trajectory=False)
         while True:
             next_ob, reward, done, next_ac = env.step([0.1, 0.1])
-            env.render()
-            print(np.shape(ob), np.shape(next_ob), ac, next_ac, reward, done)
+            # env.render()
+            if np.shape(ob) == s:
+                transition = (ob, ac, reward, next_ob, done)
+                buffer.append(transition)
+                print(np.shape(ob), np.shape(next_ob), ac, next_ac, reward, done)
+            else:
+                raise ValueError('shape must be {} but, '.format(s), np.shape(ob))
+
+            if len(buffer) >= 30:
+                t = buffer.get_batch(30)
+                t = [e[3] for e in t]
+                if not np.shape(t) == (30, 6, 224, 224, 3):
+                    raise ValueError("batch Error...", np.shape(t))
+
             obs.append(ob)
             acs.append(ac)
             next_obs.append(next_ob)
@@ -170,4 +225,4 @@ def ttest(max_epochs=0):
 
 
 if __name__ == '__main__':
-    ttest(1)
+    ttest(50)
