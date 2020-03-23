@@ -10,8 +10,8 @@ from utils.config import log_path, weight_path
 #### HYPER PARAMETERS ####
 gamma = 0.99  # reward discount factor
 
-lr_critic = 3e-3  # learning rate for the critic
-lr_actor = 1e-3  # learning rate for the actor
+lr_critic = 1e-3  # learning rate for the critic
+lr_actor = 1e-4  # learning rate for the actor
 batch_size = None
 
 
@@ -35,6 +35,9 @@ class DDPG:
         self.action_grad_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.action_dim)
         self.done_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
         self.qvalue_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
+
+        # self.feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
+        # self.feature_tareget = tf.keras.applications.ResNet50(include_top=False, weights=None)
 
         with tf.compat.v1.variable_scope('actor'):
             self.actor = self.generate_resnet_actor(trainable=True)
@@ -163,13 +166,17 @@ class DDPG:
         x.add(tf.keras.layers.BatchNormalization())
         x.add(tf.keras.layers.Conv2D(16, 3, 3, activation=tf.nn.leaky_relu))
         x.add(tf.keras.layers.BatchNormalization())
+        # if trainable:
+        #     x = tf.keras.layers.TimeDistributed(self.feature)(state_in)
+        # else:
+        #     x = tf.keras.layers.TimeDistributed(self.feature_tareget)(state_in)
         x = tf.keras.layers.TimeDistributed(x)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         # x = tf.keras.layers.LSTM(50)(x)
         x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64))(x)
         y = tf.keras.layers.Dense(128)(action_in)
-        y = tf.keras.layers.Dense(64)(action_in)
-        y = tf.keras.layers.Dense(32)(action_in)
+        y = tf.keras.layers.Dense(64)(y)
+        y = tf.keras.layers.Dense(32)(y)
         concat = tf.keras.layers.concatenate([x, y])
         # x = tf.keras.layers.Dropout(0.5)(concat)
         x = tf.keras.layers.Dense(1, activation="linear")(concat)
@@ -187,7 +194,11 @@ class DDPG:
         x.add(tf.keras.layers.BatchNormalization())
         x.add(tf.keras.layers.Conv2D(16, 3, 3, activation=tf.nn.leaky_relu))
         x.add(tf.keras.layers.BatchNormalization())
-
+        #
+        # if trainable:
+        #     x = tf.keras.layers.TimeDistributed(self.feature)(state_in)
+        # else:
+        #     x = tf.keras.layers.TimeDistributed(self.feature_tareget)(state_in)
         x = tf.keras.layers.TimeDistributed(x)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         # x = tf.keras.layers.LSTM(50)(x)

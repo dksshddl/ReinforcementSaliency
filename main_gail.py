@@ -109,14 +109,9 @@ def main(args=None):
             #         agent_a=actions)
 
             # output of this discriminator is reward
-            d_rewards = []
-            for i in range(len(observations)):
-                d_rewards.append(D.get_rewards(agent_s=observations, agent_a=actions))
+            d_rewards = D.get_rewards(observations, actions)
             d_rewards = np.reshape(d_rewards, newshape=[-1]).astype(dtype=np.float32)
-            gaes = []
-            for r, v, nv in zip(d_rewards, v_preds, v_preds_next):
-                gae = PPO.get_gaes(r, v, nv)
-                gaes.append(gae)
+            gaes = PPO.get_gaes(d_rewards, v_preds, v_preds_next)
             gaes = np.array(gaes).astype(dtype=np.float32)
             # gaes = (gaes - gaes.mean()) / gaes.std()
             v_preds_next = np.array(v_preds_next).astype(dtype=np.float32)

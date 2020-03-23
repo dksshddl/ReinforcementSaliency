@@ -52,7 +52,7 @@ class Agent:
             buffer = [[], [], [], [], []]
             while True:
                 # TODO OU noise
-                if steps == 1000:
+                if steps == 500:
                     train_indicator = True
 
                 # pred_ac = self.model.actor.predict(np.array([ob]))
@@ -79,7 +79,7 @@ class Agent:
             w.write("{} {}\n".format(target_video, ep_reward))
             if train_indicator:
                 print("start train")
-                self.update(100)
+                self.update(20)
                 self.model.save()
                 self.replay_buffer.clear()
                 steps = 0

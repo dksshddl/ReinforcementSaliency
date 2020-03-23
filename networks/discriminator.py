@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 batch_size = None
-n_sample = 8
+n_samples = 8
 
 class Discriminator:
     def __init__(self, env):
@@ -13,14 +13,14 @@ class Discriminator:
 
         with tf.variable_scope('discriminator'):
             self.scope = tf.get_variable_scope().name
-            self.expert_s = tf.placeholder(dtype=tf.float32, shape=[batch_size] + [n_sample] + list(env.observation_space.shape))
+            self.expert_s = tf.placeholder(dtype=tf.float32, shape=[batch_size] + [n_samples] + list(env.observation_space.shape))
             self.expert_a = tf.placeholder(dtype=tf.float32, shape=[batch_size] + list(env.action_space.shape))
             # expert_a_one_hot = tf.one_hot(self.expert_a, depth=env.action_space.n)
             # add noise for stabilise training
             # expert_a_one_hot += tf.random_normal(tf.shape(expert_a_one_hot), mean=0.2, stddev=0.1, dtype=tf.float32)/1.2
             # expert_s_a = tf.concat([self.expert_s, expert_a_one_hot], axis=1)
 
-            self.agent_s = tf.placeholder(dtype=tf.float32, shape=[batch_size] + [n_sample] + list(env.observation_space.shape))
+            self.agent_s = tf.placeholder(dtype=tf.float32, shape=[batch_size] + [n_samples] + list(env.observation_space.shape))
             self.agent_a = tf.placeholder(dtype=tf.float32, shape=[batch_size] + list(env.action_space.shape))
             # agent_a_one_hot = tf.one_hot(self.agent_a, depth=env.action_space.n)
             # add noise for stabilise training

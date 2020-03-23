@@ -28,7 +28,7 @@ class PPOTrain:
 
         # inputs for train_op
         with tf.variable_scope('train_inp'):
-            self.actions = tf.placeholder(dtype=tf.int32, shape=[None], name='actions')
+            self.actions = tf.placeholder(dtype=tf.float32, shape=[None, 2], name='actions')
             self.rewards = tf.placeholder(dtype=tf.float32, shape=[None], name='rewards')
             self.v_preds_next = tf.placeholder(dtype=tf.float32, shape=[None], name='v_preds_next')
             self.gaes = tf.placeholder(dtype=tf.float32, shape=[None], name='gaes')
@@ -47,8 +47,8 @@ class PPOTrain:
         with tf.variable_scope('loss'):
             # construct computation graph for loss_clip
             # ratios = tf.divide(act_probs, act_probs_old)
-            ratios = tf.exp(tf.log(tf.clip_by_value(act_probs, 1e-10, 1.0))
-                            - tf.log(tf.clip_by_value(act_probs_old, 1e-10, 1.0)))
+            ratios = tf.exp(tf.log(tf.clip_by_value(act_probs, -1.0, 1.0))
+                            - tf.log(tf.clip_by_value(act_probs_old, -1.0, 1.0)))
             clipped_ratios = tf.clip_by_value(ratios, clip_value_min=1 - clip_value, clip_value_max=1 + clip_value)
             loss_clip = tf.minimum(tf.multiply(self.gaes, ratios), tf.multiply(self.gaes, clipped_ratios))
             loss_clip = tf.reduce_mean(loss_clip)
