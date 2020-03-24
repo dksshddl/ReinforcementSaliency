@@ -60,7 +60,7 @@ class Agent:
 
                 if done:
                     break
-                if np.shape(next_ob) == (8, 224, 224, 3):
+                if len(next_ob) >= 4:
                     buffer[0].append(ob)
                     buffer[1].append(ac)
                     buffer[2].append([reward])
@@ -128,7 +128,7 @@ class Agent:
     def update(self, update_step):
         for _ in range(update_step):
 
-            batches = self.replay_buffer.get_batch(5)  # --> [30, :, :, :, :]
+            batches = self.replay_buffer.get_batch(8)  # --> [40, :, :, :, :]
 
             for batch in batches:  # batch --> [5, 5, 5, 5, 5]
                 obs = np.asarray(batch[0])
@@ -138,45 +138,43 @@ class Agent:
                 dones = np.asarray(batch[4])
                 y_t = np.copy(rewards)
 
-                next_action = self.model.target_actor.predict(np.array(next_obs))
-                next_action = next_action.reshape([-1, 2])
-                target_q = self.model.target_critic.predict([np.array(next_obs), np.array(next_action)])
-                target_q = target_q.reshape([-1, 1])
-
-                for i in range(len(y_t)):
-                    if dones[i]:
-                        y_t[i] = rewards[i][0]
-                    else:
-                        y_t[i] = rewards[i][0] + 0.99 * target_q[i][0]
-                y_t = np.reshape(y_t, [-1, 1])
-                self.train_step += 1
-                self.model.train_critic(np.array(obs), np.array(acs), np.array(y_t), self.train_step)
-                a_for_grad = self.model.actor.predict(np.array(obs))
-                grads = self.model.gradients(np.array(obs), a_for_grad)
-                self.model.train_actor(np.array(obs), grads)
-                self.model.target_actor_train()
-                self.model.target_critic_train()
-
-                # for o, a, r, no, d in zip(obs, acs, rewards, next_obs, dones):
-                #     self.train_step += 1
-                #     next_action = self.model.target_actor.predict(np.array([no]))
-                #     target_q = self.model.target_critic.predict([np.array([no]), np.array(next_action)])
-                #     r, target_q = np.squeeze(r), np.squeeze(target_q)
-                #     if np.squeeze(d):
-                #         yt = r
-                #     else:
-                #         yt = r + 0.99 * target_q
-                #     yt = np.reshape(yt, [-1, 1])
-                #     self.model.train_critic(np.array([o]), np.array([a]), np.array(yt), self.train_step)
-                #     a_for_grad = self.model.actor.predict(np.array([o]))
-                #     grads = self.model.gradients(np.array([o]), a_for_grad)
-                #     self.model.train_actor(np.array([o]), grads)
-                #     self.model.target_actor_train()
-                #     self.model.target_critic_train()
+                # next_action = self.model.target_actor.predict(np.array(next_obs))
+                # next_action = next_action.reshape([-1, 2])
+                # target_q = self.model.target_critic.predict([np.array(next_obs), np.array(next_action)])
+                # target_q = target_q.reshape([-1, 1])
                 #
-                # self.model.reset_state()
+                # for i in range(len(y_t)):
+                #     if dones[i]:
+                #         y_t[i] = rewards[i][0]
+                #     else:
+                #         y_t[i] = rewards[i][0] + 0.99 * target_q[i][0]
+                # y_t = np.reshape(y_t, [-1, 1])
+                # self.train_step += 1
+                # self.model.train_critic(np.array(obs), np.array(acs), np.array(y_t), self.train_step)
+                # a_for_grad = self.model.actor.predict(np.array(obs))
+                # grads = self.model.gradients(np.array(obs), a_for_grad)
+                # self.model.train_actor(np.array(obs), grads)
+                # self.model.target_actor_train()
+                # self.model.target_critic_train()
 
+                for o, a, r, no, d in zip(obs, acs, rewards, next_obs, dones):
+                    self.train_step += 1
+                    next_action = self.model.target_actor.predict(np.array([no]))
+                    target_q = self.model.target_critic.predict([np.array([no]), np.array(next_action)])
+                    r, target_q = np.squeeze(r), np.squeeze(target_q)
+                    if np.squeeze(d):
+                        yt = r
+                    else:
+                        yt = r + 0.99 * target_q
+                    yt = np.reshape(yt, [-1, 1])
+                    self.model.train_critic(np.array([o]), np.array([a]), np.array(yt), self.train_step)
+                    a_for_grad = self.model.actor.predict(np.array([o]))
+                    grads = self.model.gradients(np.array([o]), a_for_grad)
+                    self.model.train_actor(np.array([o]), grads)
+                    self.model.target_actor_train()
+                    self.model.target_critic_train()
 
+                self.model.reset_state()
 
 
 if __name__ == '__main__':
@@ -196,8 +194,10 @@ if __name__ == '__main__':
     # off = rewriter_config_pb2.RewriterConfig.OFF
     # config_proto.graph_options.rewrite_options.arithmetic_optimization = off
     # session = tf.Session(config=config_proto)
-    p = os.path.join(config.weight_path, config.DDPG_CONVLSTM, "model_ddpg.ckpt")
+    p = os.path.join(config.weight_path, config.DDPG_RESNET, "model_ddpg.ckpt")
     my_env = CustomEnv()
 
     a = Agent(my_env, tf.Session())
     a.train(5000)
+    # a.load(p)
+    # a.test(5)

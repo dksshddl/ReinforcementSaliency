@@ -22,7 +22,7 @@ class Policy_net:
                 x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=True)(inputs=x)
                 x = tf.keras.layers.BatchNormalization()(x)
                 x = tf.keras.layers.Flatten()(x)
-
+                self.mean = tf.keras.layers.Dense(2)(x)
                 self.act_probs = tf.keras.layers.Dense(2)(x)
 
             with tf.variable_scope('value_net'):

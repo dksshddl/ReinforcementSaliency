@@ -72,13 +72,13 @@ class CustomEnv(gym.Env):
             total_sum = np.sum(self.saliency[start_frame - 1:end_frame])
             observation = self.observation.copy()
 
-            if len(observation) > n_samples:
-                observation = observation[:n_samples]
-            elif len(observation) < n_samples:
-                embed = np.zeros(shape=(width, height, n_channels))
-                for _ in range(n_samples - len(observation)):
-                    observation = np.concatenate([observation, [embed]])
-            assert len(observation) == n_samples
+            # if len(observation) > n_samples:
+            #     observation = observation[:n_samples]
+            # elif len(observation) < n_samples:
+            #     embed = np.zeros(shape=(width, height, n_channels))
+            #     for _ in range(n_samples - len(observation)):
+            #         observation = np.concatenate([observation, [embed]])
+            # assert len(observation) == n_samples
 
             observation_sum = np.sum(saliency_observation)
             reward = observation_sum / total_sum
@@ -103,13 +103,18 @@ class CustomEnv(gym.Env):
     def reset(self, video_type="train", trajectory=False):
         self.trajectory = trajectory
         self.time_step = 0
+
         self.view = Viewport(self.width, self.height)
         self.saliency_view = Viewport(2048, 1024)
+
         self.set_dataset(video_type)
+
         self.target_video = random.choice(self.target_videos)
         print(self.target_video + " start")
+
         ran_idx = random.randint(0, len(self.x_dict[self.target_video]) - 1)
         ran_x, ran_y = self.x_dict[self.target_video][ran_idx], self.y_dict[self.target_video][ran_idx]
+
         self.saliency = read_SalMap(self.saliency_info[self.target_video])
         self.video = []
         cap = cv2.VideoCapture(os.path.join(self.video_path, self.target_video))
@@ -120,24 +125,28 @@ class CustomEnv(gym.Env):
             else:
                 cap.release()
                 break
+
         self.x_iter, self.y_iter = iter(ran_x), iter(ran_y)
         x_data, y_data = next(self.x_iter), next(self.y_iter)
         lat, lng, start_frame, end_frame = x_data[2], x_data[1], int(x_data[5]), int(x_data[6])
+
         self.start_frame, self.end_frame = start_frame, end_frame
+
         self.view.set_center((lat, lng), normalize=True)
         self.inference_view = Viewport(self.width, self.height)
         self.inference_view.set_center((lat, lng), normalize=True)
+
         if self.trajectory:
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
                                 self.video[start_frame - 1:end_frame]]
             observation = self.observation.copy()
-            if len(observation) > n_samples:
-                observation = observation[:n_samples]
-            elif len(observation) < n_samples:
-                embed = np.zeros(shape=(width, height, n_channels))
-                for _ in range(n_samples - len(observation)):
-                    observation = np.concatenate([observation, [embed]])
-            assert len(observation) == n_samples
+            # if len(observation) > n_samples:
+            #     observation = observation[:n_samples]
+            # elif len(observation) < n_samples:
+            #     embed = np.zeros(shape=(width, height, n_channels))
+            #     for _ in range(n_samples - len(observation)):
+            #         observation = np.concatenate([observation, [embed]])
+            # assert len(observation) == n_samples
             return observation, y_data, self.target_video
         else:
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in

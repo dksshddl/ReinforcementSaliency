@@ -1,5 +1,7 @@
-import tensorflow as tf
 import copy
+
+import tensorflow as tf
+import numpy as np
 
 
 class PPOTrain:
@@ -35,20 +37,23 @@ class PPOTrain:
 
         act_probs = self.Policy.act_probs
         act_probs_old = self.Old_Policy.act_probs
+        mean = self.Policy.mean
 
         # probabilities of actions which agent took with policy
-        act_probs = act_probs * tf.one_hot(indices=self.actions, depth=act_probs.shape[1])
-        act_probs = tf.reduce_sum(act_probs, axis=1)
+        output = mean + tf.sqrt(tf.exp(act_probs)) * 0.2
+        output = tf.identity(output)
 
-        # probabilities of actions which agent took with old policy
-        act_probs_old = act_probs_old * tf.one_hot(indices=self.actions, depth=act_probs_old.shape[1])
-        act_probs_old = tf.reduce_sum(act_probs_old, axis=1)
+        a = tf.exp(-1 * tf.pow(tf.stop_gradient(output) - mean, 2) / (2 * act_probs))
+        b = 1 / tf.sqrt(2 * act_probs * np.pi)
+        self.probs = tf.multiply(a, b, name="action_probs")
+
+        self.entropy = tf.reduce_sum(0.5 * tf.log(2 * np.pi * np.e * act_probs))
 
         with tf.variable_scope('loss'):
             # construct computation graph for loss_clip
-            # ratios = tf.divide(act_probs, act_probs_old)
-            ratios = tf.exp(tf.log(tf.clip_by_value(act_probs, -1.0, 1.0))
-                            - tf.log(tf.clip_by_value(act_probs_old, -1.0, 1.0)))
+            ratios = tf.divide(act_probs, act_probs_old)
+            # ratios = tf.exp(tf.log(tf.clip_by_value(act_probs, -1.0, 1.0))
+            #                 - tf.log(tf.clip_by_value(act_probs_old, -1.0, 1.0)))
             clipped_ratios = tf.clip_by_value(ratios, clip_value_min=1 - clip_value, clip_value_max=1 + clip_value)
             loss_clip = tf.minimum(tf.multiply(self.gaes, ratios), tf.multiply(self.gaes, clipped_ratios))
             loss_clip = tf.reduce_mean(loss_clip)

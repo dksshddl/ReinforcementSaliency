@@ -158,53 +158,68 @@ class DDPG:
     def generate_resnet_critic(self, trainable):
         state_in = tf.keras.layers.Input(shape=self.state_dim)
         action_in = tf.keras.layers.Input(shape=self.action_dim)
-        # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
+
+        weight_decay = tf.keras.regularizers.l2(0.001)
+        conv_initializer = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
+        lstm_initailizer = tf.keras.initializers.RandomUniform(-1 / 64, 1 / 64)
+        dense_initializer = tf.keras.initializers.RandomUniform(-1 / 200, 1 / 200)
+        final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
+
         x = tf.keras.models.Sequential()
-        x.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer,
+                                     bias_initializer=conv_initializer))
         x.add(tf.keras.layers.BatchNormalization())
-        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer,
+                                     bias_initializer=conv_initializer))
         x.add(tf.keras.layers.BatchNormalization())
-        x.add(tf.keras.layers.Conv2D(16, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer,
+                                     bias_initializer=conv_initializer))
         x.add(tf.keras.layers.BatchNormalization())
-        # if trainable:
-        #     x = tf.keras.layers.TimeDistributed(self.feature)(state_in)
-        # else:
-        #     x = tf.keras.layers.TimeDistributed(self.feature_tareget)(state_in)
+
         x = tf.keras.layers.TimeDistributed(x)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        # x = tf.keras.layers.LSTM(50)(x)
-        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64))(x)
-        y = tf.keras.layers.Dense(128)(action_in)
-        y = tf.keras.layers.Dense(64)(y)
-        y = tf.keras.layers.Dense(32)(y)
+        x = tf.keras.layers.Bidirectional(
+            tf.keras.layers.LSTM(256, kernel_initializer=lstm_initailizer, bias_initializer=lstm_initailizer,
+                                 recurrent_initializer=lstm_initailizer))(x)
+        y = tf.keras.layers.Dense(200, activation="relu", kernel_initializer=dense_initializer,
+                                  bias_initializer=dense_initializer)(action_in)
+        y = tf.keras.layers.Dense(200, activation="relu", kernel_initializer=dense_initializer,
+                                  bias_initializer=dense_initializer)(y)
         concat = tf.keras.layers.concatenate([x, y])
         # x = tf.keras.layers.Dropout(0.5)(concat)
-        x = tf.keras.layers.Dense(1, activation="linear")(concat)
+        x = tf.keras.layers.Dense(1, activation="linear", activity_regularizer=weight_decay,
+                                  kernel_initializer=final_initializer, bias_initializer=final_initializer)(concat)
         model = tf.keras.models.Model(inputs=[state_in, action_in], outputs=x)
         model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.compat.v1.losses.mean_squared_error)
         return model
 
     def generate_resnet_actor(self, trainable):
         state_in = tf.keras.layers.Input(shape=self.state_dim)
+
+        conv_initializer = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
+        final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
+        lstm_initailizer = tf.keras.initializers.RandomUniform(-1 / 64, 1 / 64)
         # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
         x = tf.keras.models.Sequential()
-        x.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer,
+                                     bias_initializer=conv_initializer))
         x.add(tf.keras.layers.BatchNormalization())
-        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer,
+                                     bias_initializer=conv_initializer))
         x.add(tf.keras.layers.BatchNormalization())
-        x.add(tf.keras.layers.Conv2D(16, 3, 3, activation=tf.nn.leaky_relu))
+        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer,
+                                     bias_initializer=conv_initializer))
         x.add(tf.keras.layers.BatchNormalization())
-        #
-        # if trainable:
-        #     x = tf.keras.layers.TimeDistributed(self.feature)(state_in)
-        # else:
-        #     x = tf.keras.layers.TimeDistributed(self.feature_tareget)(state_in)
+
         x = tf.keras.layers.TimeDistributed(x)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        # x = tf.keras.layers.LSTM(50)(x)
-        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64))(x)
+
+        x = tf.keras.layers.Bidirectional(
+            tf.keras.layers.LSTM(256, kernel_initializer=lstm_initailizer, bias_initializer=lstm_initailizer,
+                                 recurrent_initializer=lstm_initailizer))(x)
         # x = tf.keras.layers.Dropout(0.5)(x)
-        x = tf.keras.layers.Dense(2, activation="linear")(x)
+        x = tf.keras.layers.Dense(2, activation="tanh", bias_initializer=final_initializer,
+                                  kernel_initializer=final_initializer)(x)
         model = tf.keras.models.Model(inputs=state_in, outputs=x)
         return model
 
