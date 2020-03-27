@@ -9,186 +9,119 @@ from utils.config import *
 from utils.replay import ReplayBuffer
 
 n_samples = 8
-width = 224
-height = 224
+
+width = 84
+height = 84
 n_channels = 3
-frame_step = 6
 
 
 class CustomEnv(gym.Env):
 
     def __init__(self, video_type="train"):
-        self.train, self.validation, self.test = Sal360.load_sal360v2()
+        self.dataset = Sal360()
         self.width, self.height = 3840, 1920
-        self.x_dict, self.y_dict = None, None
-        self.x_iter, self.y_iter = None, None
-        self.target_videos = None
-        self.target_video = None
-        self.files = os.listdir(video_path)
+
         self.action_space = spaces.Box(-1, 1, [2])  # -1,1 사이의 1x2 벡터
         self.observation_space = spaces.Box(low=0, high=255, shape=(width, height, n_channels))
 
         self.view = None  # viewport's area / current state
         self.saliency_view = None
         self.observation = None
-        self.video_path = None
-        self.files = None
         self.trajectory = False
-        self.time_step = 0
-        self.saliency_info = get_SalMap_info()
-        self.set_dataset(video_type)
         self.start_frame, self.end_frame = None, None
 
-    def set_dataset(self, video_type="train"):
-        if video_type == "train":
-            self.x_dict, self.y_dict = self.train
-            self.video_path = os.path.join(video_path, "train", "3840x1920")
-        elif video_type == "validation":
-            self.x_dict, self.y_dict = self.validation
-            self.video_path = os.path.join(video_path, "train", "3840x1920")
-        elif video_type == "test":
-            self.x_dict, self.y_dict = self.test
-            self.video_path = os.path.join(video_path, "test", "3840x1920")
-        else:
-            raise NotImplementedError
-        self.target_videos = os.listdir(self.video_path)
-
     def step(self, action=None):
-        x_data, y_data = next(self.x_iter), next(self.y_iter)
-        step_idx, lat, lng, start_frame, end_frame = int(x_data[0]), x_data[2], x_data[1], int(x_data[5]), int(
-            x_data[6])
-        done = True if int(step_idx) == 99 else False
-        self.start_frame, self.end_frame = start_frame, end_frame
+
         if self.trajectory:
+            obs, saliency, lat, lng, action, done = self.dataset.next_data()
+
             self.inference_view.move(action)
             self.view.set_center((lat, lng), normalize=True)
             self.saliency_view.set_center((lat, lng), normalize=True)
-            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
-                                self.video[start_frame - 1:end_frame]]
 
-            saliency_observation = [self.saliency_view.get_view(f) for f in self.saliency[start_frame - 1:end_frame]]
-            assert len(self.observation) == len(saliency_observation)
+            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
+            # self.observation = [self.view.get_view(f) for f in obs]
+            saliency_observation = [self.saliency_view.get_view(f) for f in saliency]
 
-            total_sum = np.sum(self.saliency[start_frame - 1:end_frame])
-            observation = self.observation.copy()
-
-            # if len(observation) > n_samples:
-            #     observation = observation[:n_samples]
-            # elif len(observation) < n_samples:
-            #     embed = np.zeros(shape=(width, height, n_channels))
-            #     for _ in range(n_samples - len(observation)):
-            #         observation = np.concatenate([observation, [embed]])
-            # assert len(observation) == n_samples
-
+            total_sum = np.sum(saliency)
             observation_sum = np.sum(saliency_observation)
+
             reward = observation_sum / total_sum
 
-            return observation, reward, done, y_data
+            return self.observation, reward, done, action
         else:
+            obs, saliency, lat, lng, _, done = self.dataset.next_data(self.trajectory)
+
             self.view.move(action)
             self.saliency_view.move(action)
-            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
-                                self.video[self.time_step:self.time_step + frame_step]]
-            if len(self.observation) < frame_step:
-                return None, None, True, None
-            else:
-                saliency_observation = [self.saliency_view.get_view(f) for f in
-                                        self.saliency[self.time_step:self.time_step + frame_step]]
-                total_sum = np.sum(self.saliency[self.time_step:self.time_step + frame_step])
-                observation_sum = np.sum(saliency_observation)
-                reward = observation_sum / total_sum
-                self.time_step += frame_step
-                return self.observation, reward, done, None
 
-    def reset(self, video_type="train", trajectory=False):
+            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
+            # self.observation = [self.view.get_view(f) for f in obs]
+
+            saliency_observation = [self.saliency_view.get_view(f) for f in saliency]
+
+            total_sum = np.sum(saliency)
+            observation_sum = np.sum(saliency_observation)
+
+            reward = observation_sum / total_sum
+
+            return self.observation, reward, done, None
+
+    def reset(self, video_type="train", trajectory=False, target=None):
         self.trajectory = trajectory
-        self.time_step = 0
 
-        self.view = Viewport(self.width, self.height)
-        self.saliency_view = Viewport(2048, 1024)
-
-        self.set_dataset(video_type)
-
-        self.target_video = random.choice(self.target_videos)
-        print(self.target_video + " start")
-
-        ran_idx = random.randint(0, len(self.x_dict[self.target_video]) - 1)
-        ran_x, ran_y = self.x_dict[self.target_video][ran_idx], self.y_dict[self.target_video][ran_idx]
-
-        self.saliency = read_SalMap(self.saliency_info[self.target_video])
-        self.video = []
-        cap = cv2.VideoCapture(os.path.join(self.video_path, self.target_video))
-        while True:
-            ret, frame = cap.read()
-            if ret:
-                self.video.append(frame)
-            else:
-                cap.release()
-                break
-
-        self.x_iter, self.y_iter = iter(ran_x), iter(ran_y)
-        x_data, y_data = next(self.x_iter), next(self.y_iter)
-        lat, lng, start_frame, end_frame = x_data[2], x_data[1], int(x_data[5]), int(x_data[6])
-
-        self.start_frame, self.end_frame = start_frame, end_frame
-
-        self.view.set_center((lat, lng), normalize=True)
-        self.inference_view = Viewport(self.width, self.height)
-        self.inference_view.set_center((lat, lng), normalize=True)
+        self.view = Viewport(self.width * 0.3, self.height * 0.3)
+        self.saliency_view = Viewport(2048, 1024)  # saliency w, h
+        self.inference_view = Viewport(self.width * 0.3, self.height * 0.3)
 
         if self.trajectory:
-            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
-                                self.video[start_frame - 1:end_frame]]
-            observation = self.observation.copy()
-            # if len(observation) > n_samples:
-            #     observation = observation[:n_samples]
-            # elif len(observation) < n_samples:
-            #     embed = np.zeros(shape=(width, height, n_channels))
-            #     for _ in range(n_samples - len(observation)):
-            #         observation = np.concatenate([observation, [embed]])
-            # assert len(observation) == n_samples
-            return observation, y_data, self.target_video
+            video = self.dataset.select_random_trajectory(video_type)
+
+            obs, saliency, lat, lng, action, done = self.dataset.next_data()
+
+            self.view.set_center((lat, lng), normalize=True)
+            self.saliency_view.set_center((lat, lng), normalize=True)
+            self.inference_view.set_center((lat, lng), normalize=True)
+
+            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
+            # self.observation = [self.view.get_view(f) for f in obs]
+
+            return self.observation, action, video
         else:
-            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in
-                                self.video[self.time_step:self.time_step + frame_step]]
-            return self.observation, y_data, self.target_video
+            video = self.dataset.select_random_trajectory(video_type)
+            obs, saliency, lat, lng, action, done = self.dataset.next_data(self.trajectory)
+
+            self.view.set_center((lat, lng))
+            self.saliency_view.set_center((lat, lng))
+
+            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
+            # self.observation = [self.view.get_view(f) for f in obs]
+
+            return self.observation, action, video
 
     def render(self, mode='viewport', writer=None):
         if mode == 'viewport':
             if self.trajectory:
-                tmp = self.video[self.start_frame - 1:self.end_frame]
-                infer_rec = self.inference_view.get_rectangle_point()
+
                 rec = self.view.get_rectangle_point()
-                for f in tmp:
-                    if len(rec) == 2:
-                        f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)
-                    elif len(rec) == 4:
-                        f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)  # left rectangle
-                        f = cv2.rectangle(f, rec[2], rec[3], (0, 0, 255), thickness=5)  # right rectangl
-                    if len(infer_rec) == 2:
-                        f = cv2.rectangle(f, infer_rec[0], infer_rec[1], (0, 255, 0), thickness=5)
-                    elif len(infer_rec) == 4:
-                        f = cv2.rectangle(f, infer_rec[2], infer_rec[3], (0, 255, 0), thickness=5)
-                        f = cv2.rectangle(f, infer_rec[0], infer_rec[1], (0, 255, 0), thickness=5)
+                infer_rec = self.inference_view.get_rectangle_point()
+
+                for f in self.dataset.state:
+                    f = draw_viewport(f, rec, color=(255, 0, 0))
+                    f = draw_viewport(f, infer_rec, color=(0, 0, 255))
 
                     if writer is not None:
                         writer.write(f)
                     else:
                         cv2.imshow("render", f)
             else:
-                tmp = self.video[self.time_step:self.time_step + frame_step]
                 rec = self.view.get_rectangle_point()
-                for f in tmp:
-                    if len(rec) == 2:
-                        f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)
-                    elif len(rec) == 4:
-                        f = cv2.rectangle(f, rec[0], rec[1], (0, 0, 255), thickness=5)  # left rectangle
-                        f = cv2.rectangle(f, rec[2], rec[3], (0, 0, 255), thickness=5)  # right rectangl
+                for f in self.dataset.state:
+                    f = draw_viewport(f, rec)
                     if writer is not None:
                         writer.write(f)
                     else:
                         cv2.imshow("render", f)
-
         else:
             for f in self.observation:
                 if writer is not None:
@@ -197,6 +130,41 @@ class CustomEnv(gym.Env):
                     cv2.imshow("render", f)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
+        cv2.waitKey(32)
+
+
+def draw_viewport(target_frame, rectangle_point, color=(0, 0, 255), thickness=5):
+    if len(rectangle_point) == 2:
+        frame = cv2.rectangle(target_frame, rectangle_point[0], rectangle_point[1], color, thickness)
+    elif len(rectangle_point) == 4:
+        frame = cv2.rectangle(target_frame, rectangle_point[0], rectangle_point[1], color, thickness)  # left
+        frame = cv2.rectangle(frame, rectangle_point[2], rectangle_point[3], color, thickness)  # right
+    else:
+        raise ValueError(
+            f"Invalid rectangle point. rectangle point length must be 2 or 4 but got {len(rectangle_point)}")
+    return frame
+
+
+def embed_frame(observation):
+    if len(observation) > n_samples:
+        observation = observation[:n_samples]
+    elif len(observation) < n_samples:
+        embed = np.zeros(shape=(width, height, n_channels))
+        for _ in range(n_samples - len(observation)):
+            observation = np.concatenate([observation, [embed]])
+    return observation
+
+
+def read_whole_video(cap):
+    video = []
+    while True:
+        ret, frame = cap.read()
+        if ret:
+            video.append(frame)
+        else:
+            cap.release()
+            break
+    return video
 
 
 def ttest(max_epochs=0):
@@ -208,16 +176,12 @@ def ttest(max_epochs=0):
 
     while epoch < max_epochs:
         obs, acs, next_obs, rewards, dones = [], [], [], [], []
-        ob, ac, target_video = env.reset(trajectory=False)
+        ob, ac = env.reset(trajectory=False)
         while True:
             next_ob, reward, done, next_ac = env.step([0.1, 0.1])
-            # env.render()
-            if np.shape(ob) == s:
-                transition = (ob, ac, reward, next_ob, done)
-                buffer.append(transition)
-                print(np.shape(ob), np.shape(next_ob), ac, next_ac, reward, done)
-            else:
-                raise ValueError('shape must be {} but, '.format(s), np.shape(ob))
+            env.render(mode="tete")
+            transition = (ob, ac, reward, next_ob, done)
+            print(np.shape(ob), np.shape(next_ob), ac, next_ac, reward, done)
 
             if len(buffer) >= 30:
                 t = buffer.get_batch(30)

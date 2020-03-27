@@ -85,9 +85,7 @@ class Viewport:
 
     # move --> [x,x] 2x1 vector
     def move(self, v):
-        if np.shape(v) == (2,):
-            pass
-        else:
+        if not np.shape(v) == (2,):
             v = np.reshape(v, [2])
         self.center[0] += v[0] * self.VIDEO_WIDTH
         self.center[1] += v[1] * self.VIDEO_HEIGHT

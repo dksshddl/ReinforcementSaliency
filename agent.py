@@ -3,6 +3,9 @@ import datetime
 
 import numpy as np
 import tensorflow as tf
+import gym
+import cv2
+from matplotlib import pyplot as plt
 
 from tensorflow.core.protobuf import rewriter_config_pb2
 
@@ -10,9 +13,7 @@ from custom_env.envs import CustomEnv
 from algo.ddpg import DDPG
 from utils import config
 from utils.replay import ReplayBuffer
-import gym
-import cv2
-from matplotlib import pyplot as plt
+from utils.ou_noise import OUNoise
 
 
 class Agent:
@@ -31,7 +32,7 @@ class Agent:
         else:
             self.sess = sess
         self.model = DDPG(self.sess, state_dim, action_dim, action_max[0], action_min[0])
-        self.replay_buffer = ReplayBuffer(3000)
+        self.replay_buffer = ReplayBuffer(2000)
         self.sess.run(tf.global_variables_initializer())
         self.train_step = 0
 
@@ -43,47 +44,48 @@ class Agent:
         epoch = 0
         global_step = 0
         steps = 0
-        train_indicator = False
         w = open(os.path.join("log", config.DDPG_RESNET, "reward.txt"), "a")
+        self.noise = OUNoise(2)
+
         while epoch < max_epochs:
 
-            ob, ac, target_video = self.env.reset(trajectory=True)
+            ob, _, target_video = self.env.reset(trajectory=False)
             ep_reward = 0
-            buffer = [[], [], [], [], []]
             while True:
+                buffer = [[], [], [], [], []]
                 # TODO OU noise
-                if steps == 500:
-                    train_indicator = True
 
-                # pred_ac = self.model.actor.predict(np.array([ob]))
-                next_ob, reward, done, next_ac = self.env.step(ac)
+                pred_ac = self.model.actor.predict(np.array([ob]))
+                noise_ac = pred_ac.squeeze() + self.noise.noise()
+                next_ob, reward, done, next_ac = self.env.step(noise_ac)
+
+                reward = reward * 10 if reward > 0.1 else -1
+                buffer[0].append(ob)
+                buffer[1].append(noise_ac)
+                buffer[2].append([reward])
+                buffer[3].append(next_ob)
+                buffer[4].append([done])
+
+                global_step += 1
+                steps += 1
+                ep_reward += reward
+
+                self.update(buffer)
+
+                # self.replay_buffer.append(buffer)
 
                 if done:
                     break
-                if len(next_ob) >= 4:
-                    buffer[0].append(ob)
-                    buffer[1].append(ac)
-                    buffer[2].append([reward])
-                    buffer[3].append(next_ob)
-                    buffer[4].append([done])
-                    if len(buffer[0]) == 5:
-                        self.replay_buffer.append(buffer)
-                        buffer = [[], [], [], [], []]
-                    ob = next_ob
-                    ac = next_ac
-                    global_step += 1
-                    steps += 1
-                ep_reward += reward
+                ob = next_ob
 
             print("{}'s reward is {} # {}".format(target_video, ep_reward, global_step))
+
+            self.model.writer.add_summary(
+                tf.Summary(value=[tf.Summary.Value(tag=target_video, simple_value=ep_reward)]), global_step)
+
             w.write("{} {}\n".format(target_video, ep_reward))
-            if train_indicator:
-                print("start train")
-                self.update(20)
-                self.model.save()
-                self.replay_buffer.clear()
-                steps = 0
-                train_indicator = False
+            self.model.save()
+
             if epoch is not 0 and epoch % 25 is 0:
                 self.model.save(epoch)
 
@@ -108,6 +110,8 @@ class Agent:
             reward_sum = 0
             while True:
                 next_ob, reward, done, next_ac = self.env.step(pred_ac)
+                distance = pred_ac / next_ac
+                print(next_ac, pred_ac, distance)
                 self.env.render(mode="viewport", writer=writer)
                 rewards.append(reward)
                 if done:
@@ -125,10 +129,12 @@ class Agent:
             print("end ", target_video, " reward is ", reward_sum)
             epoch += 1
 
-    def update(self, update_step):
-        for _ in range(update_step):
+    def update(self, transition):
+        self.replay_buffer.append(transition)
 
-            batches = self.replay_buffer.get_batch(8)  # --> [40, :, :, :, :]
+        if len(self.replay_buffer) > 2_000:
+
+            batches = self.replay_buffer.get_batch(32)  # --> [40, :, :, :, :]
 
             for batch in batches:  # batch --> [5, 5, 5, 5, 5]
                 obs = np.asarray(batch[0])
@@ -138,47 +144,51 @@ class Agent:
                 dones = np.asarray(batch[4])
                 y_t = np.copy(rewards)
 
-                # next_action = self.model.target_actor.predict(np.array(next_obs))
-                # next_action = next_action.reshape([-1, 2])
-                # target_q = self.model.target_critic.predict([np.array(next_obs), np.array(next_action)])
-                # target_q = target_q.reshape([-1, 1])
-                #
-                # for i in range(len(y_t)):
-                #     if dones[i]:
-                #         y_t[i] = rewards[i][0]
-                #     else:
-                #         y_t[i] = rewards[i][0] + 0.99 * target_q[i][0]
-                # y_t = np.reshape(y_t, [-1, 1])
-                # self.train_step += 1
-                # self.model.train_critic(np.array(obs), np.array(acs), np.array(y_t), self.train_step)
-                # a_for_grad = self.model.actor.predict(np.array(obs))
-                # grads = self.model.gradients(np.array(obs), a_for_grad)
-                # self.model.train_actor(np.array(obs), grads)
-                # self.model.target_actor_train()
-                # self.model.target_critic_train()
+                next_action = self.model.target_actor.predict(np.array(next_obs))
+                next_action = next_action.reshape([-1, 2])
+                target_q = self.model.target_critic.predict([np.array(next_obs), np.array(next_action)])
+                target_q = target_q.reshape([-1, 1])
 
-                for o, a, r, no, d in zip(obs, acs, rewards, next_obs, dones):
-                    self.train_step += 1
-                    next_action = self.model.target_actor.predict(np.array([no]))
-                    target_q = self.model.target_critic.predict([np.array([no]), np.array(next_action)])
-                    r, target_q = np.squeeze(r), np.squeeze(target_q)
-                    if np.squeeze(d):
-                        yt = r
+                for i in range(len(y_t)):
+                    if dones[i]:
+                        y_t[i] = rewards[i][0]
                     else:
-                        yt = r + 0.99 * target_q
-                    yt = np.reshape(yt, [-1, 1])
-                    self.model.train_critic(np.array([o]), np.array([a]), np.array(yt), self.train_step)
-                    a_for_grad = self.model.actor.predict(np.array([o]))
-                    grads = self.model.gradients(np.array([o]), a_for_grad)
-                    self.model.train_actor(np.array([o]), grads)
-                    self.model.target_actor_train()
-                    self.model.target_critic_train()
+                        y_t[i] = rewards[i][0] + 0.99 * target_q[i][0]
+                y_t = np.reshape(y_t, [-1, 1])
+                acs.reshape([-1, 2])
+                print("train start ", np.shape(obs), np.shape(acs), np.shape(y_t))
+                self.train_step += 1
+                self.model.train_critic(np.array(obs), np.array(acs), np.array(y_t), self.train_step)
+                a_for_grad = self.model.actor.predict(np.array(obs))
+                grads = self.model.gradients(np.array(obs), a_for_grad)
+                self.model.train_actor(np.array(obs), grads)
+                self.model.target_actor_train()
+                self.model.target_critic_train()
 
-                self.model.reset_state()
+                # for o, a, r, no, d in zip(obs, acs, rewards, next_obs, dones):
+                #     self.train_step += 1
+                #     next_action = self.model.target_actor.predict(np.array([no]))
+                #     target_q = self.model.target_critic.predict([np.array([no]), np.array(next_action)])
+                #     r, target_q = np.squeeze(r), np.squeeze(target_q)
+                #     if np.squeeze(d):
+                #         yt = r
+                #     else:
+                #         yt = r + 0.99 * target_q
+                #     yt = np.reshape(yt, [-1, 1])
+                #     self.model.train_critic(np.array([o]), np.array([a]), np.array(yt), self.train_step)
+                #     a_for_grad = self.model.actor.predict(np.array([o]))
+                #     grads = self.model.gradients(np.array([o]), a_for_grad)
+                #     self.model.train_actor(np.array([o]), grads)
+                #     self.model.target_actor_train()
+                #     self.model.target_critic_train()
+
+                # self.model.reset_state()
+
+        if np.squeeze(transition[4]):
+            self.noise.reset()
 
 
 if __name__ == '__main__':
-
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:
         # 텐서플로가 첫 번째 GPU에 1GB 메모리만 할당하도록 제한
@@ -188,12 +198,6 @@ if __name__ == '__main__':
             # 프로그램 시작시에 가장 장치가 설정되어야만 합니다
             print(e)
 
-    # tf.keras.backend.clear_session()  # For easy reset of notebook state.
-    #
-    # config_proto = tf.ConfigProto()
-    # off = rewriter_config_pb2.RewriterConfig.OFF
-    # config_proto.graph_options.rewrite_options.arithmetic_optimization = off
-    # session = tf.Session(config=config_proto)
     p = os.path.join(config.weight_path, config.DDPG_RESNET, "model_ddpg.ckpt")
     my_env = CustomEnv()
 
