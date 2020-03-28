@@ -51,6 +51,9 @@ class Sal360:
 
         self.time_step = 0
 
+        self.video = None
+        self.saliency_map = None
+
     def load_sal360v2(self):
 
         data = []
@@ -155,37 +158,50 @@ class Sal360:
     def next(self, type="train"):
         pass
 
-    def select_random_trajectory(self, type="train", target_video=None):
+    def choice_dir(self, s):
+        if s == TRAIN:
+            path = self.train_video_path
+            x_dict, y_dict = self.train
+        elif s == VALIDATION:
+            path = self.train_video_path
+            x_dict, y_dict = self.validation
+        elif s == TEST:
+            path = self.test_video_path
+            x_dict, y_dict = self.test
+        else:
+            raise ValueError(f"train type must be train, validation or test but got {s}")
+
+        return x_dict, y_dict, path
+
+    def select_trajectory(self, mode="train", target_video=None, randomness=True):
         self.time_step = 0
         if target_video is None:
-            if type == TRAIN:
+            if mode == TRAIN:
                 self.target_video = random.choice(os.listdir(self.train_video_path))
-            elif type == TEST:
+            elif mode == TEST:
                 self.target_video = random.choice(os.listdir(self.test_video_path))
-            elif type == VALIDATION:
+            elif mode == VALIDATION:
                 self.target_video = random.choice(os.listdir(self.train_video_path))
         else:
             self.target_video = target_video
 
-        if type == TRAIN:
-            path = self.train_video_path
-            x_dict, y_dict = self.train
-        elif type == VALIDATION:
-            path = self.train_video_path
-            x_dict, y_dict = self.validation
-        elif type == TEST:
-            path = self.test_video_path
-            x_dict, y_dict = self.test
-        else:
-            raise ValueError(f"train type must be train, validation or test but got {type}")
-        ran_idx = random.randint(0, len(x_dict[self.target_video]) - 1)
-        ran_x, ran_y = x_dict[self.target_video][ran_idx], y_dict[self.target_video][ran_idx]
-        self.x_iter = iter(ran_x)
-        self.y_iter = iter(ran_y)
-        self.video = self.get_video(path)
-        self.saliency_map = self.get_saliency_map()
-        return self.target_video
+        x_dict, y_dict, path = self.choice_dir(mode)
 
+        if randomness:
+            ran_idx = random.randint(0, len(x_dict[self.target_video]) - 1)
+            ran_x, ran_y = x_dict[self.target_video][ran_idx], y_dict[self.target_video][ran_idx]
+            self.x_iter, self.y_iter = iter(ran_x), iter(ran_y)
+            self.video = self.get_video(path)
+            self.saliency_map = self.get_saliency_map()
+            return self.target_video
+        else:
+            if self.video is None:
+                self.video = self.get_video(path)
+                print(np.shape(self.video))
+                # self.saliency_map = self.get_saliency_map()
+                self.x_data, self.y_data = iter(x_dict[self.target_video]), iter(y_dict[self.target_video])
+            self.x_iter, self.y_iter = iter(next(self.x_data)), iter(next(self.y_data))
+            return self.target_video
 
     def get_video(self, path):
         cap = cv2.VideoCapture(os.path.join(path, self.target_video))
@@ -194,13 +210,55 @@ class Sal360:
     def get_saliency_map(self):
         return read_SalMap(self.saliency_info[self.target_video])
 
+    def get_expert_trajectory(self, target_video, mode="train"):
+        self.target_video = target_video
+
+        # self.saliency_map = self.get_saliency_map()
+        total_ob, total_ac, total_done = [], [], []
+        while True:
+            try:
+                obs, acs, rewards, dones = [], [], [], []
+
+                # reset env
+                self.select_trajectory(target_video=target_video, randomness=False)
+                state, _, lat, lng, ac, done = self.next_data(trajectory=True)
+
+                view = Viewport(3840, 1920)
+                view.set_center((lat, lng), normalize=True)
+                ob = [view.get_view(f) for f in state]
+
+                obs.append(ob)
+                acs.append(ac)
+                dones.append(done)
+
+                while True:
+                    next_state, _, lat, lng, next_ac, done = self.next_data(trajectory=True)
+                    next_ob = [view.get_view(f) for f in next_state]
+
+                    view.set_center((lat, lng), normalize=True)
+
+                    obs.append(next_ob)
+                    acs.append(next_ac)
+                    dones.append(done)
+                    if done:
+                        break
+                total_ob.append(obs)
+                total_ac.append(acs)
+                total_done.append(dones)
+            except StopIteration:
+                print(np.shape(total_ob), np.shape(total_ac), np.shape(total_done))
+                return total_ob, total_ac, total_done
+
     def next_data(self, trajectory=True):
         x_data, y_data = next(self.x_iter), next(self.y_iter)
         lat, lng, start_frame, end_frame = x_data[2], x_data[1], int(x_data[5]), int(x_data[6])
         if trajectory:
             done = True if x_data[0] == 99 else False
             self.state = self.video[start_frame - 1:end_frame]
-            self.saliency_state = self.saliency_map[start_frame - 1:end_frame]
+            if self.saliency_map is not None:
+                self.saliency_state = self.saliency_map[start_frame - 1:end_frame]
+            else:
+                self.saliency_state = None
             return self.state, self.saliency_state, lat, lng, y_data, done
         else:
             frame_step = fps_list[self.target_video]
@@ -390,6 +448,8 @@ class Sal360:
 
 
 if __name__ == '__main__':
+    a = Sal360()
+    a.get_expert_trajectory(target_video="10_Cows.mp4")
     # gen = DataGenerator.generator_for_batch(224, 224, type='validation')
     # gen = DataGenerator.generator(224, 224)
     # for x, y in gen:

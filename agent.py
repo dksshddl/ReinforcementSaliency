@@ -32,7 +32,7 @@ class Agent:
         else:
             self.sess = sess
         self.model = DDPG(self.sess, state_dim, action_dim, action_max[0], action_min[0])
-        self.replay_buffer = ReplayBuffer(2000)
+        self.replay_buffer = ReplayBuffer(5000)
         self.sess.run(tf.global_variables_initializer())
         self.train_step = 0
 
@@ -59,7 +59,7 @@ class Agent:
                 noise_ac = pred_ac.squeeze() + self.noise.noise()
                 next_ob, reward, done, next_ac = self.env.step(noise_ac)
 
-                reward = reward * 10 if reward > 0.1 else -1
+                reward = reward * 10
                 buffer[0].append(ob)
                 buffer[1].append(noise_ac)
                 buffer[2].append([reward])
@@ -132,9 +132,10 @@ class Agent:
     def update(self, transition):
         self.replay_buffer.append(transition)
 
-        if len(self.replay_buffer) > 2_000:
+        if len(self.replay_buffer) >= 1_000:
 
             batches = self.replay_buffer.get_batch(32)  # --> [40, :, :, :, :]
+            print("train start ", np.shape(batches))
 
             for batch in batches:  # batch --> [5, 5, 5, 5, 5]
                 obs = np.asarray(batch[0])
@@ -156,7 +157,6 @@ class Agent:
                         y_t[i] = rewards[i][0] + 0.99 * target_q[i][0]
                 y_t = np.reshape(y_t, [-1, 1])
                 acs.reshape([-1, 2])
-                print("train start ", np.shape(obs), np.shape(acs), np.shape(y_t))
                 self.train_step += 1
                 self.model.train_critic(np.array(obs), np.array(acs), np.array(y_t), self.train_step)
                 a_for_grad = self.model.actor.predict(np.array(obs))

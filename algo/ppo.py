@@ -3,9 +3,11 @@ import copy
 import tensorflow as tf
 import numpy as np
 
+from networks.policy_net import Policy_net
+
 
 class PPOTrain:
-    def __init__(self, Policy, Old_Policy, gamma=0.95, clip_value=0.2, c_1=1, c_2=0.01):
+    def __init__(self, Policy: Policy_net, Old_Policy: Policy_net, gamma=0.95, clip_value=0.2, c_1=1, c_2=0.01):
         """
         :param Policy:
         :param Old_Policy:
@@ -32,47 +34,36 @@ class PPOTrain:
         with tf.variable_scope('train_inp'):
             self.actions = tf.placeholder(dtype=tf.float32, shape=[None, 2], name='actions')
             self.rewards = tf.placeholder(dtype=tf.float32, shape=[None], name='rewards')
-            self.v_preds_next = tf.placeholder(dtype=tf.float32, shape=[None], name='v_preds_next')
-            self.gaes = tf.placeholder(dtype=tf.float32, shape=[None], name='gaes')
+            self.v_preds_next = tf.placeholder(dtype=tf.float32, shape=[None], name='v_preds_next')  # value
+            self.gaes = tf.placeholder(dtype=tf.float32, shape=[None], name='gaes')  # advantage
 
-        act_probs = self.Policy.act_probs
-        act_probs_old = self.Old_Policy.act_probs
-        mean = self.Policy.mean
-
-        # probabilities of actions which agent took with policy
-        output = mean + tf.sqrt(tf.exp(act_probs)) * 0.2
-        output = tf.identity(output)
-
-        a = tf.exp(-1 * tf.pow(tf.stop_gradient(output) - mean, 2) / (2 * act_probs))
-        b = 1 / tf.sqrt(2 * act_probs * np.pi)
-        self.probs = tf.multiply(a, b, name="action_probs")
-
-        self.entropy = tf.reduce_sum(0.5 * tf.log(2 * np.pi * np.e * act_probs))
-
+        log_prob = self.Policy.dist.log_prob(self.actions)
+        old_log_prob = self.Old_Policy.dist.log_prob(self.actions)
         with tf.variable_scope('loss'):
             # construct computation graph for loss_clip
-            ratios = tf.divide(act_probs, act_probs_old)
-            # ratios = tf.exp(tf.log(tf.clip_by_value(act_probs, -1.0, 1.0))
-            #                 - tf.log(tf.clip_by_value(act_probs_old, -1.0, 1.0)))
-            clipped_ratios = tf.clip_by_value(ratios, clip_value_min=1 - clip_value, clip_value_max=1 + clip_value)
-            loss_clip = tf.minimum(tf.multiply(self.gaes, ratios), tf.multiply(self.gaes, clipped_ratios))
-            loss_clip = tf.reduce_mean(loss_clip)
-            tf.summary.scalar('loss_clip', loss_clip)
+            ratios = tf.exp(log_prob - old_log_prob)
+            ratios = tf.reduce_mean(ratios, axis=1, keep_dims=True)
+
+            clipped_ratios = tf.clip_by_value(ratios, clip_value_min=1 - clip_value,
+                                              clip_value_max=1 + clip_value)  # clip value - epsilon
+            surr1 = ratios * self.gaes
+            surr2 = clipped_ratios * self.gaes
+            surr = tf.minimum(surr1, surr2)
+            policy_loss = tf.reduce_mean(surr)
+            tf.summary.scalar('policy_loss', policy_loss)
 
             # construct computation graph for loss of entropy bonus
-            entropy = -tf.reduce_sum(self.Policy.act_probs *
-                                     tf.log(tf.clip_by_value(self.Policy.act_probs, 1e-10, 1.0)), axis=1)
-            entropy = tf.reduce_mean(entropy, axis=0)  # mean of entropy of pi(obs)
+            entropy = tf.reduce_mean(self.Policy.dist.entropy())
             tf.summary.scalar('entropy', entropy)
 
             # construct computation graph for loss of value function
             v_preds = self.Policy.v_preds
-            loss_vf = tf.squared_difference(self.rewards + self.gamma * self.v_preds_next, v_preds)
-            loss_vf = tf.reduce_mean(loss_vf)
-            tf.summary.scalar('value_difference', loss_vf)
+            value_loss = tf.squared_difference(self.rewards + self.gamma * self.v_preds_next, v_preds)  # value loss
+            value_loss = tf.reduce_mean(value_loss)
+            tf.summary.scalar('value_loss', value_loss)
 
             # construct computation graph for loss
-            loss = loss_clip - c_1 * loss_vf + c_2 * entropy
+            loss = policy_loss - c_1 * value_loss + c_2 * entropy  # c1, c2 is weight
 
             # minimize -loss == maximize loss
             loss = -loss

@@ -67,7 +67,7 @@ class CustomEnv(gym.Env):
 
             return self.observation, reward, done, None
 
-    def reset(self, video_type="train", trajectory=False, target=None):
+    def reset(self, video_type="train", trajectory=False, target_video=None, randomness=True):
         self.trajectory = trajectory
 
         self.view = Viewport(self.width * 0.3, self.height * 0.3)
@@ -75,7 +75,7 @@ class CustomEnv(gym.Env):
         self.inference_view = Viewport(self.width * 0.3, self.height * 0.3)
 
         if self.trajectory:
-            video = self.dataset.select_random_trajectory(video_type)
+            video = self.dataset.select_trajectory(video_type, randomness=randomness)
 
             obs, saliency, lat, lng, action, done = self.dataset.next_data()
 
@@ -88,7 +88,7 @@ class CustomEnv(gym.Env):
 
             return self.observation, action, video
         else:
-            video = self.dataset.select_random_trajectory(video_type)
+            video = self.dataset.select_trajectory(video_type)
             obs, saliency, lat, lng, action, done = self.dataset.next_data(self.trajectory)
 
             self.view.set_center((lat, lng))
@@ -153,18 +153,6 @@ def embed_frame(observation):
         for _ in range(n_samples - len(observation)):
             observation = np.concatenate([observation, [embed]])
     return observation
-
-
-def read_whole_video(cap):
-    video = []
-    while True:
-        ret, frame = cap.read()
-        if ret:
-            video.append(frame)
-        else:
-            cap.release()
-            break
-    return video
 
 
 def ttest(max_epochs=0):

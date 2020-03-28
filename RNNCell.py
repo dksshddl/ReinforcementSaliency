@@ -1,8 +1,19 @@
-numbers = [1, 123, 34]
-for number in numbers:
-    if len(str(number)) == 1:
-        print(number, "는 {} 자릿수입니다.".format(len(str(number))))
-    elif len(str(number)) == 2:
-        print(number, "는 {} 자릿수입니다.".format(len(str(number))))
-    else:
-        print(number, "는 {} 자릿수입니다.".format(len(str(number))))
+import tensorflow as tf
+import numpy as np
+
+ph = tf.placeholder(dtype=tf.float32, shape=[None, None, 10, 10, 3])
+
+a = np.zeros([3, 10, 10, 3])
+b = np.zeros([5, 10, 10, 3])
+
+c = np.array([a, b])
+
+inp = tf.keras.layers.Input(shape=[None, 10, 10, 3])
+
+dense = tf.keras.layers.Dense(50)(inp)
+
+model = tf.keras.Model(inputs=inp, outputs=dense)
+
+model.summary()
+
+model.predict(c)

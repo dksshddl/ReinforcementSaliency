@@ -11,12 +11,12 @@ def embed_frame(observation, n_samples=8, width=224, height=224, n_channels=3):
     return observation
 
 
-def read_whole_video(cap):
+def read_whole_video(cap, fx=0.3, fy=0.3):
     video = []
     while True:
         ret, frame = cap.read()
         if ret:
-            frame = cv2.resize(frame, dsize=(0, 0), fx=0.3, fy=0.3)
+            frame = cv2.resize(frame, dsize=(0, 0), fx=fx, fy=fy)
             video.append(frame)
         else:
             cap.release()

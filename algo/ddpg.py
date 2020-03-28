@@ -78,14 +78,14 @@ class DDPG:
         feed_dict = {self.critic.inputs[0]: states, self.critic.inputs[1]: actions}
         return self.sess.run(self.action_grad, feed_dict=feed_dict)[0]
 
-    def target_critic_train(self, tau=0.01):
+    def target_critic_train(self, tau=0.001):
         critic_weights = self.critic.get_weights()
         critic_target_weights = self.target_critic.get_weights()
         for i in range(len(critic_weights)):
             critic_target_weights[i] = tau * critic_weights[i] + (1 - tau) * critic_target_weights[i]
         self.target_critic.set_weights(critic_target_weights)
 
-    def target_actor_train(self, tau=0.01):
+    def target_actor_train(self, tau=0.001):
         actor_weights = self.actor.get_weights()
         actor_target_weights = self.target_actor.get_weights()
         for i in range(len(actor_weights)):
