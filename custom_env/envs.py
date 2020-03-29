@@ -85,7 +85,6 @@ class CustomEnv(gym.Env):
 
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
             # self.observation = [self.view.get_view(f) for f in obs]
-
             return self.observation, action, video
         else:
             video = self.dataset.select_trajectory(video_type)
@@ -96,7 +95,6 @@ class CustomEnv(gym.Env):
 
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
             # self.observation = [self.view.get_view(f) for f in obs]
-
             return self.observation, action, video
 
     def render(self, mode='viewport', writer=None):
@@ -158,13 +156,12 @@ def embed_frame(observation):
 def ttest(max_epochs=0):
     env = CustomEnv()
     epoch = 0
-    s = (6, 224, 224, 3)
 
     buffer = ReplayBuffer(3000)
 
     while epoch < max_epochs:
         obs, acs, next_obs, rewards, dones = [], [], [], [], []
-        ob, ac = env.reset(trajectory=False)
+        ob, ac, _ = env.reset(trajectory=True)
         while True:
             next_ob, reward, done, next_ac = env.step([0.1, 0.1])
             env.render(mode="tete")
@@ -188,6 +185,8 @@ def ttest(max_epochs=0):
             ob = next_ob
             ac = next_ac
             #     env.render()
+        obs = tf.keras.preprocessing.sequence.pad_sequences(obs, padding='post', value=256, maxlen=30)
+
         print("epoch # of ", epoch)
         print("obs shape: ", np.shape(obs))
         print("acs shape: ", np.shape(acs), acs[0])

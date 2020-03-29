@@ -67,10 +67,11 @@ class Policy_net:
             init_output_weights = tf.initializers.variance_scaling(scale=init_output_factor)
 
             with tf.variable_scope('policy_net'):
-                x = tf.keras.layers.ConvLSTM2D(20, 5, return_sequences=True)(self.obs)
+                x = tf.keras.layers.ConvLSTM2D(20, 5, return_sequences=True, stateful=True)(self.obs)
                 x = tf.keras.layers.BatchNormalization()(x)
-                x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=True, stateful=True)(inputs=x)
                 x = tf.keras.layers.BatchNormalization()(x)
+                x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=False, stateful=True)(inputs=x)
                 x = tf.keras.layers.Flatten()(x)
                 mean = tf.keras.layers.Dense(2, activation="tanh", kernel_initializer=init_output_weights)(x)
                 # mean = tf.keras.layers.Dense(x, 2, activation="linear",
@@ -90,12 +91,12 @@ class Policy_net:
                 print(f"policy is {self.dist}")
 
             with tf.variable_scope('value_net'):
-                x = tf.keras.layers.RNN()
-                convlstmCell = tf.keras.layers.LSTMCell(256)
-                x = tf.keras.layers.ConvLSTM2D(20, 5, return_sequences=True)(self.obs)
+                x = tf.keras.layers.Masking(256)(self.obs)
+                x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=True, stateful=True)(self.obs)
                 x = tf.keras.layers.BatchNormalization()(x)
-                x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=True, stateful=True)(inputs=x)
                 x = tf.keras.layers.BatchNormalization()(x)
+                x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=False, stateful=True)(inputs=x)
                 x = tf.keras.layers.Flatten()(x)
                 self.v_preds = tf.keras.layers.Dense(1, activation="linear")(x)
 

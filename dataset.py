@@ -3,6 +3,7 @@ import os
 import random
 import pprint
 
+import tensorflow as tf
 import cv2
 import math
 import matplotlib.pylab as plt
@@ -196,16 +197,16 @@ class Sal360:
             return self.target_video
         else:
             if self.video is None:
-                self.video = self.get_video(path)
+                self.video = self.get_video(path, fx=0.3, fy=0.3)
                 print(np.shape(self.video))
                 # self.saliency_map = self.get_saliency_map()
                 self.x_data, self.y_data = iter(x_dict[self.target_video]), iter(y_dict[self.target_video])
             self.x_iter, self.y_iter = iter(next(self.x_data)), iter(next(self.y_data))
             return self.target_video
 
-    def get_video(self, path):
+    def get_video(self, path, fx=0.3, fy=0.3):
         cap = cv2.VideoCapture(os.path.join(path, self.target_video))
-        return read_whole_video(cap)
+        return read_whole_video(cap, fx=fx, fy=fy)
 
     def get_saliency_map(self):
         return read_SalMap(self.saliency_info[self.target_video])
@@ -223,9 +224,9 @@ class Sal360:
                 self.select_trajectory(target_video=target_video, randomness=False)
                 state, _, lat, lng, ac, done = self.next_data(trajectory=True)
 
-                view = Viewport(3840, 1920)
+                view = Viewport(3840 * 0.3, 1920 * 0.3)
                 view.set_center((lat, lng), normalize=True)
-                ob = [view.get_view(f) for f in state]
+                ob = [cv2.resize(view.get_view(f), (84, 84)) for f in state]
 
                 obs.append(ob)
                 acs.append(ac)
@@ -233,7 +234,7 @@ class Sal360:
 
                 while True:
                     next_state, _, lat, lng, next_ac, done = self.next_data(trajectory=True)
-                    next_ob = [view.get_view(f) for f in next_state]
+                    next_ob = [cv2.resize(view.get_view(f), (84, 84)) for f in next_state]
 
                     view.set_center((lat, lng), normalize=True)
 
@@ -242,6 +243,8 @@ class Sal360:
                     dones.append(done)
                     if done:
                         break
+
+                obs = tf.keras.preprocessing.sequence.pad_sequences(obs, padding='post', value=256, maxlen=8)
                 total_ob.append(obs)
                 total_ac.append(acs)
                 total_done.append(dones)

@@ -12,7 +12,9 @@ gamma = 0.99  # reward discount factor
 
 lr_critic = 1e-3  # learning rate for the critic
 lr_actor = 1e-4  # learning rate for the actor
-batch_size = None
+
+batch_size = 1
+n_samples = 30
 
 
 # tau = 1e-2  # soft target update rate
@@ -22,7 +24,6 @@ class DDPG:
     def __init__(self, sess, state_dim, action_dim, action_max, action_min, load=None):
         self.sess = sess
 
-        n_samples = None
         self.state_dim = [n_samples] + state_dim  # [6, 224, 224, 3]
         self.action_dim = action_dim  # [2]
         self.action_max = float(action_max)
@@ -40,17 +41,17 @@ class DDPG:
         # self.feature_tareget = tf.keras.applications.ResNet50(include_top=False, weights=None)
 
         with tf.compat.v1.variable_scope('actor'):
-            self.actor = self.generate_resnet_actor(trainable=True)
-            # self.actor = self.generate_actor_network(trainable=True)
+            # self.actor = self.generate_resnet_actor(trainable=True)
+            self.actor = self.generate_actor_network(trainable=True)
         with tf.compat.v1.variable_scope('target_actor'):
-            self.target_actor = self.generate_resnet_actor(trainable=False)
-            # self.target_actor = self.generate_actor_network(trainable=False)
+            # self.target_actor = self.generate_resnet_actor(trainable=False)
+            self.target_actor = self.generate_actor_network(trainable=False)
         with tf.compat.v1.variable_scope('critic'):
-            self.critic = self.generate_resnet_critic(trainable=True)
-            # self.critic = self.generate_critic_network(trainable=True)
+            # self.critic = self.generate_resnet_critic(trainable=True)
+            self.critic = self.generate_critic_network(trainable=True)
         with tf.compat.v1.variable_scope('target_critic'):
-            self.target_critic = self.generate_resnet_critic(trainable=False)
-            # self.target_critic = self.generate_critic_network(trainable=False)
+            # self.target_critic = self.generate_resnet_critic(trainable=False)
+            self.target_critic = self.generate_critic_network(trainable=False)
 
         self.actor.summary()
         self.critic.summary()
@@ -125,11 +126,12 @@ class DDPG:
         weight_decay = tf.keras.regularizers.l2(0.001)
         final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
 
-        x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=True, trainable=trainable)(state_in)
+        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(state_in)
+        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=True, trainable=trainable)(x)
+        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=False, trainable=trainable)(x)
+        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=False, stateful=True, trainable=trainable)(x)
         x = tf.keras.layers.BatchNormalization()(x)
         # x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         x = tf.keras.layers.Flatten(trainable=trainable)(x)
@@ -151,11 +153,12 @@ class DDPG:
 
         final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
 
-        x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=True, trainable=trainable)(state_in)
+        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(state_in)
+        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=True, trainable=trainable)(x)
+        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=False, trainable=trainable)(x)
+        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=False, stateful=True, trainable=trainable)(x)
         x = tf.keras.layers.BatchNormalization()(x)
         # x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         x = tf.keras.layers.Flatten(trainable=trainable)(x)
