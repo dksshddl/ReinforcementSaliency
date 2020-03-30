@@ -201,7 +201,13 @@ class Sal360:
                 print(np.shape(self.video))
                 # self.saliency_map = self.get_saliency_map()
                 self.x_data, self.y_data = iter(x_dict[self.target_video]), iter(y_dict[self.target_video])
-            self.x_iter, self.y_iter = iter(next(self.x_data)), iter(next(self.y_data))
+
+            try:
+                self.x_iter, self.y_iter = iter(next(self.x_data)), iter(next(self.y_data))
+            except StopIteration:
+                self.x_data, self.y_data = iter(x_dict[self.target_video]), iter(y_dict[self.target_video])  # ring
+                self.x_iter, self.y_iter = iter(next(self.x_data)), iter(next(self.y_data))
+
             return self.target_video
 
     def get_video(self, path, fx=0.3, fy=0.3):

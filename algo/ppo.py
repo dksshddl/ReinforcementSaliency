@@ -109,3 +109,7 @@ class PPOTrain:
                                                                        self.rewards: rewards,
                                                                        self.v_preds_next: v_preds_next,
                                                                        self.gaes: gaes})
+
+    def reset_states(self):
+        self.Policy.reset_states()
+        self.Old_Policy.reset_states()

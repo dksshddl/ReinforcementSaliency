@@ -67,11 +67,12 @@ class Policy_net:
             init_output_weights = tf.initializers.variance_scaling(scale=init_output_factor)
 
             with tf.variable_scope('policy_net'):
-                x = tf.keras.layers.ConvLSTM2D(20, 5, return_sequences=True, stateful=True)(self.obs)
+                x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(self.obs)
+                x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True)(x)
                 x = tf.keras.layers.BatchNormalization()(x)
-                x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=True, stateful=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True)(inputs=x)
                 x = tf.keras.layers.BatchNormalization()(x)
-                x = tf.keras.layers.ConvLSTM2D(10, 5, return_sequences=False, stateful=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=False, stateful=True)(inputs=x)
                 x = tf.keras.layers.Flatten()(x)
                 mean = tf.keras.layers.Dense(2, activation="tanh", kernel_initializer=init_output_weights)(x)
                 # mean = tf.keras.layers.Dense(x, 2, activation="linear",
@@ -82,7 +83,7 @@ class Policy_net:
                 # std = tf.tile(std[None, None], [tf.shape(mean)[0], tf.shape(mean)[1]] + [1] * (mean.shape.ndims - 2))
                 #
                 # policy = CustomKLDiagNormal(mean, std)
-
+                self.policy_model = tf.keras.models.Model(inputs=self.obs, outputs=mean)
                 logstd = tf.get_variable(name='logstd', shape=[1, 2],
                                          initializer=tf.zeros_initializer())
                 std = tf.zeros_like(mean) + tf.exp(logstd)
@@ -91,17 +92,18 @@ class Policy_net:
                 print(f"policy is {self.dist}")
 
             with tf.variable_scope('value_net'):
-                x = tf.keras.layers.Masking(256)(self.obs)
-                x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=True, stateful=True)(self.obs)
+                x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(self.obs)
+                x = tf.keras.layers.ConvLSTM2D(64, 3, return_sequences=True, stateful=True)(x)
                 x = tf.keras.layers.BatchNormalization()(x)
-                x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=True, stateful=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(64, 3, return_sequences=True, stateful=True)(inputs=x)
                 x = tf.keras.layers.BatchNormalization()(x)
-                x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=False, stateful=True)(inputs=x)
+                x = tf.keras.layers.ConvLSTM2D(64, 3, return_sequences=False, stateful=True)(inputs=x)
                 x = tf.keras.layers.Flatten()(x)
                 self.v_preds = tf.keras.layers.Dense(1, activation="linear")(x)
 
-            action = self.dist.sample(1)
-            self.action = tf.reshape(action, [2])
+                self.value_model = tf.keras.models.Model(inputs=self.obs, outputs=self.v_preds)
+
+            self.action = tf.reshape(self.dist.sample(1), [2])
 
             self.scope = tf.get_variable_scope().name
 
@@ -116,3 +118,7 @@ class Policy_net:
 
     def get_trainable_variables(self):
         return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope)
+
+    def reset_states(self):
+        self.value_model.reset_states()
+        self.policy_model.reset_states()

@@ -31,13 +31,13 @@ class Discriminator:
             # agent_s_a = tf.concat([self.agent_s, agent_a_one_hot], axis=1)
 
             with tf.variable_scope('network') as network_scope:
-                prob_1 = self.construct_network(self.expert_s, self.expert_a)
+                self.model_expert = self.construct_network(self.expert_s, self.expert_a)
                 network_scope.reuse_variables()  # share parameter
-                prob_2 = self.construct_network(self.agent_s, self.agent_a)
+                self.model_agent = self.construct_network(self.agent_s, self.agent_a)
 
             with tf.variable_scope('loss'):
-                loss_expert = tf.reduce_mean(tf.log(tf.clip_by_value(prob_1, 0.01, 1)))
-                loss_agent = tf.reduce_mean(tf.log(tf.clip_by_value(1 - prob_2, 0.01, 1)))
+                loss_expert = tf.reduce_mean(tf.log(tf.clip_by_value(self.model_expert.outputs, 0.01, 1)))
+                loss_agent = tf.reduce_mean(tf.log(tf.clip_by_value(1 - self.model_agent.outputs, 0.01, 1)))
                 loss = loss_expert + loss_agent
                 loss = -loss
                 tf.summary.scalar('discriminator', loss)
@@ -45,22 +45,27 @@ class Discriminator:
             optimizer = tf.train.AdamOptimizer()
             self.train_op = optimizer.minimize(loss)
 
-            self.rewards = tf.log(tf.clip_by_value(prob_2, 1e-10, 1))  # log(P(expert|s,a)) larger is better for agent
+            self.rewards = tf.log(tf.clip_by_value(self.model_agent.outputs, 1e-10, 1))  # log(P(expert|s,a)) larger is better for agent
 
     def construct_network(self, input_s, input_a):
-        x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=True, stateful=True)(input_s)
+        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(input_s)
+        x = tf.keras.layers.ConvLSTM2D(128, 3, 3, return_sequences=True, stateful=True)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=True, stateful=True)(inputs=x)
+        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True)(inputs=x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(40, 3, return_sequences=False, stateful=True)(inputs=x)
+        x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=False, stateful=True)(inputs=x)
         x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Flatten()(x)
-        y = tf.keras.layers.Dense(512, activation="relu")(input_a)
-        y = tf.keras.layers.Dense(32, activation="relu")(y)
+        y = tf.keras.layers.Dense(128, activation="relu")(input_a)
+        y = tf.keras.layers.Dense(128, activation="relu")(y)
         concat = tf.keras.layers.concatenate([x, y])
         prob = tf.keras.layers.Dense(1, activation="sigmoid")(concat)
+        model = tf.kras.models.Model(inputs=[input_s, input_a], outputs=prob)
+        return model
 
-        return prob
+    def reset_state(self):
+        self.model_agent.reset_states()
+        self.model_expert.reset_states()
 
     def train(self, expert_s, expert_a, agent_s, agent_a):
         return tf.get_default_session().run(self.train_op, feed_dict={self.expert_s: expert_s,

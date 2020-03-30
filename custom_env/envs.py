@@ -36,12 +36,19 @@ class CustomEnv(gym.Env):
             obs, saliency, lat, lng, action, done = self.dataset.next_data()
 
             self.inference_view.move(action)
+            self.saliency_infer_view.move(action)
             self.view.set_center((lat, lng), normalize=True)
             self.saliency_view.set_center((lat, lng), normalize=True)
 
-            self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
-            # self.observation = [self.view.get_view(f) for f in obs]
-            saliency_observation = [self.saliency_view.get_view(f) for f in saliency]
+            if self.inference:
+                self.observation = [cv2.resize(self.inference_view.get_view(f), (width, height)) for f in obs]
+                # self.observation = [self.inference_view.get_view(f) for f in obs]
+                saliency_observation = [self.saliency_infer_view.get_view(f) for f in saliency]
+
+            else:
+                self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
+                # self.observation = [self.view.get_view(f) for f in obs]
+                saliency_observation = [self.saliency_view.get_view(f) for f in saliency]
 
             total_sum = np.sum(saliency)
             observation_sum = np.sum(saliency_observation)
@@ -67,12 +74,14 @@ class CustomEnv(gym.Env):
 
             return self.observation, reward, done, None
 
-    def reset(self, video_type="train", trajectory=False, target_video=None, randomness=True):
+    def reset(self, video_type="train", trajectory=False, target_video=None, randomness=True, inference=True):
+        self.inference = inference
         self.trajectory = trajectory
 
         self.view = Viewport(self.width * 0.3, self.height * 0.3)
         self.saliency_view = Viewport(2048, 1024)  # saliency w, h
         self.inference_view = Viewport(self.width * 0.3, self.height * 0.3)
+        self.saliency_infer_view = Viewport(2048, 1024)
 
         if self.trajectory:
             video = self.dataset.select_trajectory(video_type, randomness=randomness)
@@ -82,6 +91,7 @@ class CustomEnv(gym.Env):
             self.view.set_center((lat, lng), normalize=True)
             self.saliency_view.set_center((lat, lng), normalize=True)
             self.inference_view.set_center((lat, lng), normalize=True)
+            self.saliency_infer_view.set_center((lat, lng), normalize=True)
 
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
             # self.observation = [self.view.get_view(f) for f in obs]
