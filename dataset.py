@@ -8,7 +8,6 @@ import cv2
 import math
 import matplotlib.pylab as plt
 import numpy as np
-from keras.layers import *
 from mpl_toolkits.mplot3d import Axes3D
 
 from utils.viewport import Viewport
@@ -60,7 +59,6 @@ class Sal360:
         data = []
         actions = []
         data_dict = {}
-
         for file in sorted(os.listdir(scanpaths_H_path)):
             data_dict[file] = []
             with open(os.path.join(scanpaths_H_path, file)) as f:
