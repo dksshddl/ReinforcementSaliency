@@ -51,7 +51,7 @@ class Agent:
 
             ob, _, target_video = self.env.reset(trajectory=False)
             ob = tf.keras.preprocessing.sequence.pad_sequences([ob], padding='post', value=256, maxlen=30)
-
+            history = []
             ep_reward = 0
             while True:
                 buffer = [[], [], [], [], []]

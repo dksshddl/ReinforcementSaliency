@@ -57,19 +57,22 @@ class Policy_net:
         :param name: string
         :param env: gym env
         """
-
-        ob_space = env.observation_space
-        act_space = env.action_space
+        if env is not None:
+            ob_space = env.observation_space
+            act_space = env.action_space
+        else:
+            ob_space = (84, 84, 3)
 
         with tf.variable_scope(name):
-            self.obs = tf.placeholder(dtype=tf.float32, shape=[batch_size] + [n_samples] + list(ob_space.shape),
+            self.obs = tf.placeholder(dtype=tf.float32, shape=[batch_size] + [n_samples] + list(ob_space
+                                                                                                ),
                                       name='obs')
 
             # before_softplus_std_initailizer = tf.keras.initializers.constant(np.log(np.exp(init_std) - 1))
             init_output_weights = tf.initializers.variance_scaling(scale=init_output_factor)
 
             with tf.variable_scope('policy_net'):
-                pstate_in = tf.keras.layers.Input(shape=[batch_size] + list(ob_space.shape))
+                pstate_in = tf.keras.layers.Input(shape=[n_samples] + list(ob_space), batch_size=batch_size)
                 x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(pstate_in)
                 x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True)(x)
                 x = tf.keras.layers.BatchNormalization()(x)
@@ -97,7 +100,7 @@ class Policy_net:
                 print(f"policy is {self.dist}")
 
             with tf.variable_scope('value_net'):
-                vstate_in = tf.keras.layers.Input(shape=[batch_size] + list(ob_space.shape))
+                vstate_in = tf.keras.layers.Input(shape=[n_samples] + list(ob_space), batch_size=batch_size)
                 x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(vstate_in)
                 x = tf.keras.layers.ConvLSTM2D(64, 3, return_sequences=True, stateful=True)(x)
                 x = tf.keras.layers.BatchNormalization()(x)
@@ -110,12 +113,11 @@ class Policy_net:
                 self.value_model = tf.keras.models.Model(inputs=vstate_in, outputs=self.v_preds)
 
             self.action = tf.reshape(self.dist.sample(1), [2])
-
             self.scope = tf.get_variable_scope().name
 
     def act(self, obs, stochastic=True):
-        action = tf.get_default_session().run([self.action], feed_dict={self.policy_model.output: obs})
-        v_preds = self.value_model.predict(obs)
+        action = tf.get_default_session().run([self.action], feed_dict={self.policy_model.input: obs})
+        v_preds = self.value_model.predict(np.array(obs))
         return action, v_preds
 
     def get_action_prob(self, obs):
@@ -133,5 +135,9 @@ class Policy_net:
 
 
 if __name__ == '__main__':
-    env = CustomEnv()
-    aa = Policy_net("test", env)
+    session = tf.Session()
+    aa = Policy_net("test", None)
+    session.run(tf.global_variables_initializer())
+    inp = np.zeros([1, 8, 84, 84, 3])
+    a, b = aa.act(inp)
+    print(a, b)

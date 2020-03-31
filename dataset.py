@@ -172,7 +172,7 @@ class Sal360:
 
         return x_dict, y_dict, path
 
-    def select_trajectory(self, mode="train", target_video=None, randomness=True):
+    def select_trajectory(self, fx, fy, mode="train", target_video=None, randomness=True, saliency=False):
         self.time_step = 0
         if target_video is None:
             if mode == TRAIN:
@@ -190,12 +190,13 @@ class Sal360:
             ran_idx = random.randint(0, len(x_dict[self.target_video]) - 1)
             ran_x, ran_y = x_dict[self.target_video][ran_idx], y_dict[self.target_video][ran_idx]
             self.x_iter, self.y_iter = iter(ran_x), iter(ran_y)
-            self.video = self.get_video(path)
-            self.saliency_map = self.get_saliency_map()
+            self.video = self.get_video(path, fx, fy)
+            if saliency:
+                self.saliency_map = self.get_saliency_map()
             return self.target_video
         else:
             if self.video is None:
-                self.video = self.get_video(path, fx=0.3, fy=0.3)
+                self.video = self.get_video(path, fx, fy)
                 print(np.shape(self.video))
                 # self.saliency_map = self.get_saliency_map()
                 self.x_data, self.y_data = iter(x_dict[self.target_video]), iter(y_dict[self.target_video])
@@ -247,7 +248,6 @@ class Sal360:
                     dones.append(done)
                     if done:
                         break
-
                 obs = tf.keras.preprocessing.sequence.pad_sequences(obs, padding='post', value=256, maxlen=8)
                 total_ob.append(obs)
                 total_ac.append(acs)

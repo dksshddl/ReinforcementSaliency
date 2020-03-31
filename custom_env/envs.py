@@ -44,7 +44,6 @@ class CustomEnv(gym.Env):
                 self.observation = [cv2.resize(self.inference_view.get_view(f), (width, height)) for f in obs]
                 # self.observation = [self.inference_view.get_view(f) for f in obs]
                 saliency_observation = [self.saliency_infer_view.get_view(f) for f in saliency]
-
             else:
                 self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
                 # self.observation = [self.view.get_view(f) for f in obs]
@@ -74,13 +73,13 @@ class CustomEnv(gym.Env):
 
             return self.observation, reward, done, None
 
-    def reset(self, video_type="train", trajectory=False, target_video=None, randomness=True, inference=True):
+    def reset(self, video_type="train", trajectory=False, target_video=None, randomness=True, inference=True,fx=0.3,fy=0.3):
         self.inference = inference
         self.trajectory = trajectory
 
-        self.view = Viewport(self.width * 0.3, self.height * 0.3)
+        self.view = Viewport(self.width * fx, self.height * fy)
         self.saliency_view = Viewport(2048, 1024)  # saliency w, h
-        self.inference_view = Viewport(self.width * 0.3, self.height * 0.3)
+        self.inference_view = Viewport(self.width * fx, self.height * fy)
         self.saliency_infer_view = Viewport(2048, 1024)
 
         if self.trajectory:

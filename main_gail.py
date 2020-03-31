@@ -149,9 +149,9 @@ def main(args=None):
             # train policy
             inp = [observations, actions, gaes, d_rewards, v_preds_next]
             PPO.assign_policy_parameters()
-            # for ob, ac, gae, dr, vp in zip(observations, actions, gaes, d_rewards, v_preds_next):
-            #     print(np.shape(ob), np.shape(ac), np.shape(gae), np.shape(dr), np.shape(vp))
-            #     PPO.train(np.array([ob]), np.array([ac]), np.array([gae]), np.array([dr]), np.array([vp]))
+            for ob, ac, gae, dr, vp in zip(observations, actions, gaes, d_rewards, v_preds_next):
+                print(np.shape(ob), np.shape(ac), np.shape(gae), np.shape(dr), np.shape(vp))
+                PPO.train(np.array([ob]), np.array([ac]), np.array([gae]), np.array([dr]), np.array([vp]))
 
             PPO.train(obs=observations,
                       actions=actions,
@@ -159,15 +159,15 @@ def main(args=None):
                       rewards=d_rewards,
                       v_preds_next=v_preds_next)
             PPO.reset_states()
-            # for epoch in range(6):
-            #     sample_indices = np.random.randint(low=0, high=observations.shape[0],
-            #                                        size=32)  # indices are in [low, high)
-            #     sampled_inp = [np.take(a=a, indices=sample_indices, axis=0) for a in inp]  # sample training data
-            #     PPO.train(obs=sampled_inp[0],
-            #               actions=sampled_inp[1],
-            #               gaes=sampled_inp[2],
-            #               rewards=sampled_inp[3],
-            #               v_preds_next=sampled_inp[4])
+            for epoch in range(6):
+                sample_indices = np.random.randint(low=0, high=observations.shape[0],
+                                                   size=32)  # indices are in [low, high)
+                sampled_inp = [np.take(a=a, indices=sample_indices, axis=0) for a in inp]  # sample training data
+                PPO.train(obs=sampled_inp[0],
+                          actions=sampled_inp[1],
+                          gaes=sampled_inp[2],
+                          rewards=sampled_inp[3],
+                          v_preds_next=sampled_inp[4])
 
             summary = PPO.get_summary(obs=inp[0],
                                       actions=inp[1],
