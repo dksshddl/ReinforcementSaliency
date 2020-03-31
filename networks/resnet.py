@@ -16,13 +16,25 @@ class Resnet:
 
         self.y_true = tf.placeholder(tf.float32, [None, 2])
 
-        self.construct()
+        self.construct_resent()
         pass
+
+    def construct_resent(self):
+        state_in = tf.keras.layers.Input(batch_shape=[None] + [None] + list(self.state_dim))
+        # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 2048
+        feature = tf.keras.applications.MobileNetV2(include_top=False, weights=None)  # 1280
+        x = tf.keras.layers.TimeDistributed(feature)(state_in)
+        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
+        lstm = tf.keras.layers.LSTM(256)(x)
+        out = tf.keras.layers.Dense(2, activation="linear")(lstm)
+        model = tf.keras.models.Model(inputs=state_in, outputs=out)
+
+        model.summary()
 
     def construct(self):
         state_in = tf.keras.layers.Input(batch_shape=[1] + [timestep] + list(self.state_dim))
-
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(state_in)
+
         x = tf.keras.layers.ConvLSTM2D(128, 5, 1, return_sequences=True, stateful=True)(x)
         x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.ConvLSTM2D(128, 5, 1, return_sequences=True, stateful=True)(x)
@@ -45,8 +57,7 @@ class Resnet:
         self.model.summary()
 
         self.loss = tf.keras.losses.mean_squared_error(self.y_true, self.model.output)
-        self.opt = tf.keras.optimizers.Adam().minimize(self.loss)
-        tf.summary.scalar()
+        self.opt = tf.train.AdamOptimizer().minimize(self.loss)
 
         if not os.path.exists(writer_path):
             os.mkdir(writer_path)
@@ -55,10 +66,10 @@ class Resnet:
         self.loss_summary = tf.compat.v1.summary.scalar("loss", self.loss)
 
     def optimize(self, inputs, true, step):
-        loss, summary = tf.get_default_session().run([self.opt, self.loss_summary],
-                                                     feed_dict={self.model.input: inputs,
-                                                                self.y_true: true})
-        self.writer.add_summary(summary, step)
+        loss = self.model.train_on_batch(inputs, true)
+
+        self.writer.add_summary(
+            tf.Summary(value=[tf.Summary.Value(tag="loss", simple_value=loss)]), step)
 
         return loss
 
@@ -78,4 +89,4 @@ class Resnet:
 
 
 if __name__ == '__main__':
-    a = Resnet((224, 224, 3))
+    a = Resnet((84, 84, 3), tf.Session())
