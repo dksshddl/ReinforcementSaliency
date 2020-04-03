@@ -43,17 +43,21 @@ class CustomEnv(gym.Env):
             if self.inference:
                 self.observation = [cv2.resize(self.inference_view.get_view(f), (width, height)) for f in obs]
                 # self.observation = [self.inference_view.get_view(f) for f in obs]
-                saliency_observation = [self.saliency_infer_view.get_view(f) for f in saliency]
+                if saliency is not None:
+                    saliency_observation = [self.saliency_infer_view.get_view(f) for f in saliency]
             else:
                 self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
                 # self.observation = [self.view.get_view(f) for f in obs]
-                saliency_observation = [self.saliency_view.get_view(f) for f in saliency]
+                if saliency is not None:
+                    saliency_observation = [self.saliency_view.get_view(f) for f in saliency]
 
-            total_sum = np.sum(saliency)
-            observation_sum = np.sum(saliency_observation)
+            if saliency is not None:
+                total_sum = np.sum(saliency)
+                observation_sum = np.sum(saliency_observation)
 
-            reward = observation_sum / total_sum
-
+                reward = observation_sum / total_sum
+            else:
+                reward = None
             return self.observation, reward, done, action
         else:
             obs, saliency, lat, lng, _, done = self.dataset.next_data(self.trajectory)
@@ -73,7 +77,8 @@ class CustomEnv(gym.Env):
 
             return self.observation, reward, done, None
 
-    def reset(self, video_type="train", trajectory=False, target_video=None, randomness=True, inference=True,fx=0.3,fy=0.3):
+    def reset(self, video_type="train", trajectory=False, target_video=None, randomness=True, inference=True, fx=0.3,
+              fy=0.3):
         self.inference = inference
         self.trajectory = trajectory
 
@@ -83,7 +88,7 @@ class CustomEnv(gym.Env):
         self.saliency_infer_view = Viewport(2048, 1024)
 
         if self.trajectory:
-            video = self.dataset.select_trajectory(video_type, randomness=randomness)
+            video = self.dataset.select_trajectory(fx, fy, mode=video_type, randomness=randomness, )
 
             obs, saliency, lat, lng, action, done = self.dataset.next_data()
 

@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-batch_size = 100
+batch_size = 1
 n_samples = 8
 
 

@@ -1,2 +1,11 @@
 # Created by .ignore support plugin (hsz.mobi)
 .idea
+__pycache__/
+algo/__pycache__/
+custom_env/__pycache__/
+log/
+networks/__pycache__/
+output_video/
+test/
+utils/__pycache__/
+weights/

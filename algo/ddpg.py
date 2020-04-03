@@ -24,12 +24,12 @@ class DDPG:
     def __init__(self, sess, state_dim, action_dim, action_max, action_min, load=None):
         self.sess = sess
 
-        self.state_dim = [n_samples] + state_dim  # [6, 224, 224, 3]
+        self.state_dim = state_dim  # [6, 224, 224, 3]
         self.action_dim = action_dim  # [2]
         self.action_max = float(action_max)
         self.action_min = float(action_min)
 
-        self.state_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.state_dim)
+        self.state_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + [n_samples] + self.state_dim)
         self.reward_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
         self.next_state_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.state_dim)
         self.action_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.action_dim)
