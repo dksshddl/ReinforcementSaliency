@@ -29,13 +29,20 @@ class Resnet:
 
         self.writer = tf.compat.v1.summary.FileWriter(writer_path, tf.get_default_graph())
         self.loss_summary = tf.compat.v1.summary.scalar("loss", self.loss)
-
-        pass
+        self.saver = tf.train.Saver()
 
     def construct_resent(self):
         state_in = tf.keras.layers.Input(batch_shape=[None] + [None] + list(self.state_dim))
-        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 2048
-        # feature = tf.keras.applications.MobileNetV2(include_top=False, weights=None)  # 1280
+        # feature = tf.keras.applications.MobileNetV2(include_top=False, weights=None)  # 2048
+        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 1280
+        # feature = tf.keras.Sequential()
+        # feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        # feature.add(tf.keras.layers.BatchNormalization())
+        # feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        # feature.add(tf.keras.layers.BatchNormalization())
+        # feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        # feature.add(tf.keras.layers.BatchNormalization())
+
         x = tf.keras.layers.TimeDistributed(feature)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         lstm = tf.keras.layers.LSTM(256)(x)
@@ -79,6 +86,9 @@ class Resnet:
     def reset_state(self):
         self.model.reset_states()
 
+    def train_batch(self, x, y):
+        pass
+
     def save(self, save_path=None, step=None):
         if save_path is None:
             save_path = os.path.join(weight_path, "supervised")
@@ -90,6 +100,11 @@ class Resnet:
             model_name = f"model_{step}.ckpt"
         self.model.save_weights(os.path.join(save_path, model_name))
 
+    def restore(self, save_path=None, step=None):
+        if save_path is None:
+            save_path = os.path.join(weight_path, "supervised", "model.ckpt")
+
+        self.saver.restore(self.session, save_path)
 
 if __name__ == '__main__':
     a = Resnet((84, 84, 3), tf.Session())

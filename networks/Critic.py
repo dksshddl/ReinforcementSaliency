@@ -13,7 +13,7 @@ class Critic:
         self.history_dim = [None] + list(state_dim)
         self.action_dim = action_dim
 
-        self.q_value_ph = tf.placeholder(tf.float32, shape=[None] + [self.action_dim])
+        self.q_value_ph = tf.placeholder(tf.float32, shape=[None] + [1])
 
         with tf.variable_scope(scope):
             self.model = self.create_network()
@@ -21,13 +21,24 @@ class Critic:
         self.gradient_q = tf.gradients(self.model.output, self.model.inputs[1])
         self.critic_loss = tf.reduce_mean((self.model.output - self.q_value_ph))
         self.optimize = tf.train.AdamOptimizer().minimize(self.critic_loss)
+        # self.optimize = tf.keras.optimizers.AdamOptimizer().minimize(self.critic_loss)
+
 
     def create_network(self):
         state_in = tf.keras.layers.Input(batch_shape=[batch_size] + [timestep] + self.state_dim)  # history_in
         action_in = tf.keras.layers.Input(shape=[self.action_dim])
 
-        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 2048
+        # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 2048
         # feature = tf.keras.applications.MobileNetV2(include_top=False, weights=None)  # 1280
+
+        feature = tf.keras.Sequential()
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+
         x = tf.keras.layers.TimeDistributed(feature)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         x = tf.keras.layers.LSTM(256)(x)
@@ -52,7 +63,7 @@ class Critic:
         return self.sess.run(self.model.output, feed_dict)
 
     def get_q_gradient(self, history, actions):
-        feed_dict = {self.model.inputs[0]: history, self.model.inputs[2]: actions}
+        feed_dict = {self.model.inputs[0]: history, self.model.inputs[1]: actions}
         return self.sess.run(self.gradient_q, feed_dict)
 
     def get_weights(self):

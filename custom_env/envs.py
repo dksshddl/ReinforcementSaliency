@@ -30,13 +30,13 @@ class CustomEnv(gym.Env):
         self.trajectory = False
         self.start_frame, self.end_frame = None, None
 
-    def step(self, action=None):
+    def step(self, acs=None):
 
         if self.trajectory:
             obs, saliency, lat, lng, action, done = self.dataset.next_data()
 
-            self.inference_view.move(action)
-            self.saliency_infer_view.move(action)
+            self.inference_view.move(acs)
+            self.saliency_infer_view.move(acs)
             self.view.set_center((lat, lng), normalize=True)
             self.saliency_view.set_center((lat, lng), normalize=True)
 
@@ -62,8 +62,8 @@ class CustomEnv(gym.Env):
         else:
             obs, saliency, lat, lng, _, done = self.dataset.next_data(self.trajectory)
 
-            self.view.move(action)
-            self.saliency_view.move(action)
+            self.view.move(acs)
+            self.saliency_view.move(acs)
 
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
             # self.observation = [self.view.get_view(f) for f in obs]
@@ -78,7 +78,7 @@ class CustomEnv(gym.Env):
             return self.observation, reward, done, None
 
     def reset(self, video_type="train", trajectory=False, target_video=None, randomness=True, inference=True, fx=0.3,
-              fy=0.3):
+              fy=0.3, saliency=True):
         self.inference = inference
         self.trajectory = trajectory
 
@@ -88,7 +88,7 @@ class CustomEnv(gym.Env):
         self.saliency_infer_view = Viewport(2048, 1024)
 
         if self.trajectory:
-            video = self.dataset.select_trajectory(fx, fy, mode=video_type, randomness=randomness, )
+            video = self.dataset.select_trajectory(fx, fy, mode=video_type, randomness=randomness, saliency=saliency)
 
             obs, saliency, lat, lng, action, done = self.dataset.next_data()
 
@@ -101,7 +101,7 @@ class CustomEnv(gym.Env):
             # self.observation = [self.view.get_view(f) for f in obs]
             return self.observation, action, video
         else:
-            video = self.dataset.select_trajectory(video_type)
+            video = self.dataset.select_trajectory(fx, fy, video_type, saliency=saliency, target_video=target_video)
             obs, saliency, lat, lng, action, done = self.dataset.next_data(self.trajectory)
 
             self.view.set_center((lat, lng))
@@ -119,8 +119,8 @@ class CustomEnv(gym.Env):
                 infer_rec = self.inference_view.get_rectangle_point()
 
                 for f in self.dataset.state:
-                    f = draw_viewport(f, rec, color=(255, 0, 0))
-                    f = draw_viewport(f, infer_rec, color=(0, 0, 255))
+                    f = draw_viewport(f, rec, color=(255, 0, 0))  # Blue
+                    f = draw_viewport(f, infer_rec, color=(0, 0, 255))  # Red
 
                     if writer is not None:
                         writer.write(f)
@@ -175,18 +175,18 @@ def ttest(max_epochs=0):
 
     while epoch < max_epochs:
         obs, acs, next_obs, rewards, dones = [], [], [], [], []
-        ob, ac, _ = env.reset(trajectory=True)
+        ob, ac, _ = env.reset(trajectory=True, inference=False, saliency=True)
         while True:
             next_ob, reward, done, next_ac = env.step([0.1, 0.1])
-            env.render(mode="tete")
+            # env.render(mode="tete")
             transition = (ob, ac, reward, next_ob, done)
             print(np.shape(ob), np.shape(next_ob), ac, next_ac, reward, done)
 
-            if len(buffer) >= 30:
-                t = buffer.get_batch(30)
-                t = [e[3] for e in t]
-                if not np.shape(t) == (30, 6, 224, 224, 3):
-                    raise ValueError("batch Error...", np.shape(t))
+            # if len(buffer) >= 30:
+            #     t = buffer.get_batch(30)
+            #     t = [e[3] for e in t]
+            #     if not np.shape(t) == (30, 6, 224, 224, 3):
+            #         raise ValueError("batch Error...", np.shape(t))
 
             obs.append(ob)
             acs.append(ac)
@@ -199,7 +199,6 @@ def ttest(max_epochs=0):
             ob = next_ob
             ac = next_ac
             #     env.render()
-        obs = tf.keras.preprocessing.sequence.pad_sequences(obs, padding='post', value=256, maxlen=30)
 
         print("epoch # of ", epoch)
         print("obs shape: ", np.shape(obs))

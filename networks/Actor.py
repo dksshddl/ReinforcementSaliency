@@ -4,6 +4,8 @@ import numpy as np
 timestep = None
 batch_size = None
 
+steps = None
+
 
 class Actor:
     def __init__(self, sess, state_dim, action_dim, scope):
@@ -19,22 +21,31 @@ class Actor:
         self.gradient_param = tf.gradients(self.model.output, self.model.trainable_weights, -self.action_gradient_ph)
         self.optimize = tf.train.AdamOptimizer().apply_gradients(zip(self.gradient_param, self.model.trainable_weights))
 
-
     def create_network(self):
         state_in = tf.keras.layers.Input(batch_shape=[batch_size] + [timestep] + self.state_dim)
 
-        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 2048
+        # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 2048
         # feature = tf.keras.applications.MobileNetV2(include_top=False, weights=None)  # 1280
+
+        feature = tf.keras.Sequential()
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+
         x = tf.keras.layers.TimeDistributed(feature)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         lstm = tf.keras.layers.LSTM(256)(x)
-        out = tf.keras.layers.Dense(self.action_dim, activation="linear")(lstm)
+        out = tf.keras.layers.Dense(self.action_dim, activation="tanh")(lstm)
         model = tf.keras.models.Model(inputs=state_in, outputs=out)
 
         model.summary()
         return model
 
     def train(self, history, gradients):
+
         feed_dict = {self.model.inputs[0]: history, self.action_gradient_ph: gradients}
         self.sess.run(self.optimize, feed_dict=feed_dict)
 

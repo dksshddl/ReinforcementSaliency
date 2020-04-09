@@ -191,7 +191,7 @@ class Sal360:
             ran_x, ran_y = x_dict[self.target_video][ran_idx], y_dict[self.target_video][ran_idx]
             self.x_iter, self.y_iter = iter(ran_x), iter(ran_y)
             self.video = self.get_video(path, fx, fy)
-            if saliency:
+            if saliency or self.saliency_map is None:
                 self.saliency_map = self.get_saliency_map()
             return self.target_video
         else:
