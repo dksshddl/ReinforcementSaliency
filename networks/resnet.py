@@ -32,16 +32,17 @@ class Resnet:
         self.saver = tf.train.Saver()
 
     def construct_resent(self):
+
         state_in = tf.keras.layers.Input(batch_shape=[None] + [None] + list(self.state_dim))
         # feature = tf.keras.applications.MobileNetV2(include_top=False, weights=None)  # 2048
-        feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 1280
-        # feature = tf.keras.Sequential()
-        # feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-        # feature.add(tf.keras.layers.BatchNormalization())
-        # feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-        # feature.add(tf.keras.layers.BatchNormalization())
-        # feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-        # feature.add(tf.keras.layers.BatchNormalization())
+        # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)  # 1280
+        feature = tf.keras.Sequential()
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
 
         x = tf.keras.layers.TimeDistributed(feature)(state_in)
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
@@ -56,17 +57,17 @@ class Resnet:
         state_in = tf.keras.layers.Input(batch_shape=[1] + [timestep] + list(self.state_dim))
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(state_in)
 
-        x = tf.keras.layers.ConvLSTM2D(128, 5, 1, return_sequences=True, stateful=True)(x)
+        x = tf.keras.layers.ConvLSTM2D(128, 5, 1, return_sequences=True)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(128, 5, 1, return_sequences=True, stateful=True)(x)
+        x = tf.keras.layers.ConvLSTM2D(128, 5, 1, return_sequences=True)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, 1, return_sequences=True, stateful=True)(x)
+        x = tf.keras.layers.ConvLSTM2D(64, 5, 1, return_sequences=True)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(64, 5, 1, return_sequences=True, stateful=True)(x)
+        x = tf.keras.layers.ConvLSTM2D(64, 5, 1, return_sequences=True)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(32, 5, 1, return_sequences=True, stateful=True)(x)
+        x = tf.keras.layers.ConvLSTM2D(32, 5, 1, return_sequences=True)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(32, 5, 1, return_sequences=False, stateful=True)(x)
+        x = tf.keras.layers.ConvLSTM2D(32, 5, 1, return_sequences=False)(x)
         x = tf.keras.layers.BatchNormalization()(x)
         # x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
         x = tf.keras.layers.Flatten()(x)
@@ -89,6 +90,11 @@ class Resnet:
     def train_batch(self, x, y):
         pass
 
+    def set_weight(self, save_path=None):
+        if save_path is None:
+            save_path = os.path.join(weight_path, "supervised", "model.ckpt")
+        self.model.load_weights(save_path)
+
     def save(self, save_path=None, step=None):
         if save_path is None:
             save_path = os.path.join(weight_path, "supervised")
@@ -98,13 +104,15 @@ class Resnet:
             model_name = "model.ckpt"
         else:
             model_name = f"model_{step}.ckpt"
-        self.model.save_weights(os.path.join(save_path, model_name))
+        # self.model.save_weights()
+        self.model.save(os.path.join(save_path, model_name))
 
     def restore(self, save_path=None, step=None):
         if save_path is None:
             save_path = os.path.join(weight_path, "supervised", "model.ckpt")
-
         self.saver.restore(self.session, save_path)
+
+
 
 if __name__ == '__main__':
     a = Resnet((84, 84, 3), tf.Session())

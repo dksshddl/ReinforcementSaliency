@@ -4,9 +4,11 @@ DDPG_MOBILE = "ddpg_mobile"
 DDPG_RESNET = "ddpg_resnet2"
 DDPG_CONVLSTM = "ddpg_convLSTM2"
 DDPG = "ddpg"
-RDPG = "rdpg"
-
+RDPG = "rdpg2"
+RDPG_discrete = "rdpg_discrete"
+CARRACING = "CARRACING"
 GAIL = "gail"
+PPO = "ppo"
 
 # base dataset path
 base_path = os.path.join("C:", os.sep, "Users", "dkssh", "SaliencyData")
@@ -27,6 +29,7 @@ video_path = os.path.join(base_path, "sample_videos")
 log_path = os.path.join("log")
 weight_path = os.path.join("weights")
 output_path = os.path.join("output_video")
+data_path = os.path.join("data")
 
 fps = {
     "01_PortoRiverside.mp4": 25,

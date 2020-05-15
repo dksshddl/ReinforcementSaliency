@@ -1,11 +1,14 @@
-import numpy as np
-import cv2
-from matplotlib import pyplot as plt
+import os
 
-imgL = cv2.imread('./data/test1.png', 0)
-imgR = cv2.imread('./data/test2.png', 0)
+from algo.ddpg import Ddpg
+from utils.config import data_path, DDPG
 
-stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
-disparity = stereo.compute(imgL, imgR)
-plt.imshow(disparity, 'gray')
-plt.show()
+if __name__ == '__main__':
+
+    # p = os.path.join(data_path, RDPG_discrete, "data.npy")
+
+    agent = Ddpg((84, 84, 3), 2, mode=DDPG)
+    # agent.exploration_learn(5000)
+    # agent.load()
+    agent.train()
+    # agent.test(15)

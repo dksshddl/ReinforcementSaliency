@@ -12,6 +12,9 @@ def merge(left, right, frame):
     return np.append(l, r, 1)
 
 
+w, h = 3840, 1920
+
+
 class Viewport:
     def __init__(self, width, height):
         self.fov = 110 / 360  # (4:3, 90), (16:9, 108) HTC vive = 110
@@ -26,26 +29,6 @@ class Viewport:
         self.update()
         self._build_view()
         self.point = []
-
-    def find_tile(self):
-        n, m = 4, 8
-        h = self.VIDEO_HEIGHT / n
-        w = self.VIDEO_WIDTH / m
-        points = self.get_rectangle_point()
-        tiles = [0 for _ in range(n * m)]
-        for point in points:
-            p = (int(point[0] / w), int(point[1] / h), int(point[2] / w), int(point[3] / h))
-            x = [_ * m for _ in range(p[1], p[3] + 1)]
-            y = [_ for _ in range(p[0], p[2] + 1)]
-            for i in y:
-                for j in x:
-                    tiles[j + i] = 1
-
-            for i in range(p[0], p[2] + 1):
-                tiles[x + i] = 1
-                # TODO array out of index error
-                tiles[y + i] = 1
-        return tiles
 
     def _build_view(self):
         self.view = [self.center[0] - self.width, self.center[0] + self.width,
@@ -81,7 +64,7 @@ class Viewport:
         else:
             l = self.view_dict["left"]
             r = self.view_dict["right"]
-            return [(l[0], l[2]), (l[1], l[3]), (r[0], r[2]), (r[1], r[3])] # l_start, l_end, r_start, r_end
+            return [(l[0], l[2]), (l[1], l[3]), (r[0], r[2]), (r[1], r[3])]  # l_start, l_end, r_start, r_end
 
     # move --> [x,x] 2x1 vector
     def move(self, v):
@@ -109,3 +92,66 @@ class Viewport:
             c = c[0] * self.VIDEO_WIDTH, c[1] * self.VIDEO_HEIGHT
         self.center = np.array(c)
         self._build_view()
+
+
+class TileViewport(Viewport):
+    def __init__(self, width, height, n, m):
+        super(TileViewport, self).__init__(width, height)
+        self.n = n
+        self.m = m
+        self.tile_width = w / n
+        self.tile_height = h / m
+        self.tile = None
+
+    def set_center(self, c, normalize=False):
+        super(TileViewport, self).set_center(c, normalize=normalize)
+        self.tile_update()
+
+    def move(self, v):
+        super(TileViewport, self).move(v)
+        self.tile_update()
+
+    def tile_update(self):
+        # form --> (x1, y1), (x2, y2)
+        self.tile = np.zeros([self.n, self.m])
+        rec_point = self.get_rectangle_point()
+
+        if self.view is None:  # rec point --> 2
+            # 이 때 작동안함
+            # print("view dict")
+            # print(rec_point)
+            x1, x2, y1, y2 = rec_point[0][0], rec_point[1][0], rec_point[0][1], rec_point[1][1]
+            x11, x22, y11, y22 = rec_point[2][0], rec_point[3][0], rec_point[2][1], rec_point[3][1]
+
+            _x1, _x2 = int(x1 // self.tile_width), int(x2 // self.tile_width)
+            _y1, _y2 = int(y1 // self.tile_height), int(y2 // self.tile_height)
+            self.tile[_x1:_x2 + 1, _y1:_y2 + 1] = 1
+
+            _x11, _x22 = int(x11 // self.tile_width), int(x22 // self.tile_width)
+            _y11, _y22 = int(y11 // self.tile_height), int(y22 // self.tile_height)
+            self.tile[_x11:_x22 + 1, _y11:_y22 + 1] = 1
+        else:
+            # print("view")
+            # print(rec_point)
+            x1, x2, y1, y2 = rec_point[0][0], rec_point[1][0], rec_point[0][1], rec_point[1][1]
+            # print(f"(x1, x2), (y1, y2) : ({x1}, {x2}), ({y1}, {y2}) {rec_point}")
+            _x1, _x2 = int(x1 // self.tile_width), int(x2 // self.tile_width)
+            _y1, _y2 = int(y1 // self.tile_height), int(y2 // self.tile_height)
+            # print(f"(_x1, _x2), (_y1, _y2) : ({_x1}, {_x2}), ({_y1}, {_y2}) {rec_point}")
+
+            self.tile[_x1:_x2 + 1, _y1:_y2 + 1] = 1
+        # print(self.tile.transpose())
+
+    def tile_info(self):
+        point = []
+        print(self.tile.transpose)
+        for i in range(self.n):
+            for j in range(self.m):
+                if self.tile[i, j] == 1:
+                    point.append(self.tile_point(i, j))
+        return point
+
+    def tile_point(self, i, j):
+        x1, x2 = i * self.tile_width, (i + 1) * self.tile_width
+        y1, y2, = j * self.tile_height, (j + 1) * self.tile_height
+        return (int(x1), int(y1)), (int(x2), int(y2))

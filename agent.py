@@ -48,19 +48,15 @@ class Agent:
         self.noise = OUNoise(2)
 
         while epoch < max_epochs:
-
             ob, _, target_video = self.env.reset(trajectory=False)
             ob = tf.keras.preprocessing.sequence.pad_sequences([ob], padding='post', value=256, maxlen=30)
-            history = []
             ep_reward = 0
             while True:
                 buffer = [[], [], [], [], []]
-                # TODO OU noise
 
                 pred_ac = self.model.actor.predict(ob)
                 noise_ac = pred_ac.squeeze() + self.noise.noise()
                 next_ob, reward, done, next_ac = self.env.step(noise_ac)
-
                 next_ob = tf.keras.preprocessing.sequence.pad_sequences([next_ob], padding='post', value=256, maxlen=30)
 
                 reward = reward * 10
@@ -74,9 +70,7 @@ class Agent:
                 steps += 1
                 ep_reward += reward
 
-                self.update(buffer)
-
-                # self.replay_buffer.append(buffer)
+                self.learn(buffer)
 
                 if done:
                     break
@@ -134,7 +128,7 @@ class Agent:
             print("end ", target_video, " reward is ", reward_sum)
             epoch += 1
 
-    def update(self, transition):
+    def learn(self, transition):
         self.replay_buffer.append(transition)
 
         if len(self.replay_buffer) >= 1_000:
@@ -148,7 +142,6 @@ class Agent:
                 rewards = np.asarray(batch[2])
                 next_obs = np.asarray(batch[3])
                 dones = np.asarray(batch[4])
-
                 # next_action = self.model.target_actor.predict(np.array(next_obs))
                 # next_action = next_action.reshape([-1, 2])
                 # target_q = self.model.target_critic.predict([np.array(next_obs), np.array(next_action)])
@@ -169,7 +162,6 @@ class Agent:
                 # self.model.target_actor_train()
                 # self.model.target_critic_train()
                 # self.model.reset_state()
-
                 for o, a, r, no, d in zip(obs, acs, rewards, next_obs, dones):
                     self.train_step += 1
                     next_action = self.model.target_actor.predict(np.array([no]))

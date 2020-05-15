@@ -1,59 +1,73 @@
 import tensorflow as tf
+import numpy as np
 
 batch_size = None
+n_samples = 5
 
 
-def generate_actor_network(state_dim, action_dim, trainable=True):
-    state_in = tf.keras.layers.Input(batch_shape=[batch_size] + state_dim)
+class ContinuousControlModel:
 
-    final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
+    def __init__(self, lr, brain, h_size, epsilon, max_step, normalize, num_layers):
+        """
+        Creates Continuous Control Actor-Critic model.
+        :param brain: State-space size
+        :param h_size: Hidden layer size
+        """
+        s_size = [84, 84, 3]
+        a_size = 2
 
-    x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=True, trainable=trainable)(state_in)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=True, trainable=trainable)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=False, trainable=trainable)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    # x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-    x = tf.keras.layers.Flatten(trainable=trainable)(x)
+        self.normalize = normalize
+        self._create_global_steps()
+        self._create_reward_encoder()
 
-    x = tf.keras.layers.Dense(2, activation="tanh", bias_initializer=final_initializer,
-                              kernel_initializer=final_initializer)(x)
+        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + [n_samples] + s_size)
 
-    x = tf.keras.layers.Dense(2, trainable=trainable)(x)
+        feature = tf.keras.Sequential()
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        x = tf.keras.layers.TimeDistributed(feature)(state_in)
+        x = tf.keras.layers.Flatten()(x)
 
-    model = tf.keras.models.Model(inputs=state_in, outputs=x)
-    return model
+        self.batch_size = tf.placeholder(shape=None, dtype=tf.int32, name='batch_size')
 
+        self.mu = tf.layers.dense(x, a_size, activation=None, use_bias=False,
+                                  kernel_initializer=c_layers.variance_scaling_initializer(factor=0.01))
+        self.log_sigma_sq = tf.get_variable("log_sigma_squared", [a_size], dtype=tf.float32,
+                                            initializer=tf.zeros_initializer())
+        self.sigma_sq = tf.exp(self.log_sigma_sq)
 
-def generate_resnet_actor(state_dim, action_dim, trainable=True):
-    state_in = tf.keras.layers.Input(shape=state_dim)
+        self.epsilon = tf.placeholder(shape=[None, a_size], dtype=tf.float32, name='epsilon')
 
-    conv_initializer1 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-    conv_initializer2 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-    conv_initializer3 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-    final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
-    lstm_initailizer = tf.keras.initializers.RandomUniform(-1 / 256, 1 / 256)
-    # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
-    x = tf.keras.models.Sequential()
-    x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer1,
-                                 bias_initializer=conv_initializer1))
-    x.add(tf.keras.layers.BatchNormalization())
-    x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer2,
-                                 bias_initializer=conv_initializer2))
-    x.add(tf.keras.layers.BatchNormalization())
-    x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer3,
-                                 bias_initializer=conv_initializer3))
-    x.add(tf.keras.layers.BatchNormalization())
+        self.output = self.mu + tf.sqrt(self.sigma_sq) * self.epsilon
+        self.output_max = tf.identity(self.mu, name='action_max')
+        self.output = tf.identity(self.output, name='action')
 
-    x = tf.keras.layers.TimeDistributed(x)(state_in)
-    x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
+        a = tf.exp(-1 * tf.pow(tf.stop_gradient(self.output) - self.mu, 2) / (2 * self.sigma_sq))
+        b = 1 / tf.sqrt(2 * self.sigma_sq * np.pi)
+        self.probs = tf.multiply(a, b, name="action_probs")
 
-    x = tf.keras.layers.Bidirectional(
-        tf.keras.layers.LSTM(256, kernel_initializer=lstm_initailizer, bias_initializer=lstm_initailizer,
-                             recurrent_initializer=lstm_initailizer))(x)
-    # x = tf.keras.layers.Dropout(0.5)(x)
-    x = tf.keras.layers.Dense(2, activation="tanh", bias_initializer=final_initializer,
-                              kernel_initializer=final_initializer)(x)
-    model = tf.keras.models.Model(inputs=state_in, outputs=x)
-    return model
+        self.entropy = tf.reduce_sum(0.5 * tf.log(2 * np.pi * np.e * self.sigma_sq))
+
+        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + [n_samples] + s_size)
+
+        feature = tf.keras.Sequential()
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
+        feature.add(tf.keras.layers.BatchNormalization())
+        x = tf.keras.layers.TimeDistributed(feature)(state_in)
+
+        x = tf.keras.layers.Flatten()(x)
+
+        self.value = tf.layers.dense(x, 1, activation=None, use_bias=False)
+        self.value = tf.identity(self.value, name="value_estimate")
+
+        self.old_probs = tf.placeholder(shape=[None, a_size], dtype=tf.float32, name='old_probabilities')
+
+        self._create_ppo_optimizer(self.probs, self.old_probs, self.value, self.entropy, 0.0, epsilon, lr, max_step)

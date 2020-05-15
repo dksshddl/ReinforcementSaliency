@@ -7,12 +7,27 @@ from dataset import *
 from utils.binary import *
 from utils.config import *
 from utils.replay import ReplayBuffer
+from utils.viewport import TileViewport
 
 n_samples = 8
 
-width = 84
-height = 84
+width = 160
+height = 80
 n_channels = 3
+
+action_arr = [
+    [0, 0],
+    [0.0275, 0],
+    [-0.0275, 0],
+    [0, 0.035],
+    [0, -0.035]
+]
+
+
+def depreprocessing(action):
+    action[1] /= 5
+    action[1] = action / 2 if action[1] >= 1 else action / 4
+    return np.array([action])
 
 
 class CustomEnv(gym.Env):
@@ -20,10 +35,13 @@ class CustomEnv(gym.Env):
     def __init__(self, video_type="train"):
         self.dataset = Sal360()
         self.width, self.height = 3840, 1920
-
-        self.action_space = spaces.Box(-1, 1, [2])  # -1,1 사이의 1x2 벡터
+        # discrete
+        # self.action_space = spaces.Discrete(5)  # -1,1 사이의 1x2 벡터
+        # continuous
+        self.action_space = spaces.Box(-1, 1, (2,))
         self.observation_space = spaces.Box(low=0, high=255, shape=(width, height, n_channels))
 
+        # self.observation_space = spaces.Discrete(5)
         self.view = None  # viewport's area / current state
         self.saliency_view = None
         self.observation = None
@@ -34,6 +52,10 @@ class CustomEnv(gym.Env):
 
         if self.trajectory:
             obs, saliency, lat, lng, action, done = self.dataset.next_data()
+
+            # discrete
+            # acs = np.argmax(acs)
+            # acs = action_arr[acs]
 
             self.inference_view.move(acs)
             self.saliency_infer_view.move(acs)
@@ -60,15 +82,18 @@ class CustomEnv(gym.Env):
                 reward = None
             return self.observation, reward, done, action
         else:
-            obs, saliency, lat, lng, _, done = self.dataset.next_data(self.trajectory)
-
+            obs, saliency, _, _, _, done = self.dataset.next_data(self.trajectory)
+            # discrete
+            # acs = np.argmax(acs)
+            # acs = action_arr[acs]
             self.view.move(acs)
             self.saliency_view.move(acs)
-
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
-            # self.observation = [self.view.get_view(f) for f in obs]
+            # self.observation = [cv2.resize(self.view.get_view(obs), (width, height))]
 
+            # self.observation = [self.view.get_view(f) for f in obs]
             saliency_observation = [self.saliency_view.get_view(f) for f in saliency]
+            # saliency_observation = [self.saliency_view.get_view(saliency)]
 
             total_sum = np.sum(saliency)
             observation_sum = np.sum(saliency_observation)
@@ -82,16 +107,15 @@ class CustomEnv(gym.Env):
         self.inference = inference
         self.trajectory = trajectory
 
-        self.view = Viewport(self.width * fx, self.height * fy)
-        self.saliency_view = Viewport(2048, 1024)  # saliency w, h
-        self.inference_view = Viewport(self.width * fx, self.height * fy)
-        self.saliency_infer_view = Viewport(2048, 1024)
+        self.view = TileViewport(self.width * fx, self.height * fy, 8, 4)
+        self.saliency_view = TileViewport(2048, 1024, 8, 4)  # saliency w, h
+        self.inference_view = TileViewport(self.width * fx, self.height * fy, 8, 4)
+        self.saliency_infer_view = TileViewport(2048, 1024, 8, 4)
 
         if self.trajectory:
-            video = self.dataset.select_trajectory(fx, fy, mode=video_type, randomness=randomness, saliency=saliency)
+            video = self.dataset.select_trajectory(fx, fy, mode=video_type, randomness=randomness, saliency=False)
 
             obs, saliency, lat, lng, action, done = self.dataset.next_data()
-
             self.view.set_center((lat, lng), normalize=True)
             self.saliency_view.set_center((lat, lng), normalize=True)
             self.inference_view.set_center((lat, lng), normalize=True)
@@ -102,14 +126,15 @@ class CustomEnv(gym.Env):
             return self.observation, action, video
         else:
             video = self.dataset.select_trajectory(fx, fy, video_type, saliency=saliency, target_video=target_video)
-            obs, saliency, lat, lng, action, done = self.dataset.next_data(self.trajectory)
+            obs, saliency, _, _, _, done = self.dataset.next_data(self.trajectory)
 
-            self.view.set_center((lat, lng))
-            self.saliency_view.set_center((lat, lng))
+            self.view.set_center((0.5, 0.5))
+            self.saliency_view.set_center((0.5, 0.5))
 
             self.observation = [cv2.resize(self.view.get_view(f), (width, height)) for f in obs]
+            # self.observation = [cv2.resize(self.view.get_view(obs), (width, height))]
             # self.observation = [self.view.get_view(f) for f in obs]
-            return self.observation, action, video
+            return self.observation, None, video
 
     def render(self, mode='viewport', writer=None):
         if mode == 'viewport':
@@ -134,6 +159,17 @@ class CustomEnv(gym.Env):
                         writer.write(f)
                     else:
                         cv2.imshow("render", f)
+        elif mode == 'tile':
+            point = self.view.tile_info()
+            vp = self.view.get_rectangle_point()
+            # print(np.shape(self.dataset.state))
+            for f in self.dataset.state:
+                f = draw_tile(f, point)
+                f = draw_viewport(f, vp, color=(255, 0, 0))
+                if writer is None:
+                    cv2.imshow("render", f)
+                else:
+                    writer.write(f)
         else:
             for f in self.observation:
                 if writer is not None:
@@ -143,6 +179,17 @@ class CustomEnv(gym.Env):
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
         cv2.waitKey(32)
+
+
+def draw_tile(target_frame, rectangle_points, color=(0, 255, 0), grid=True):
+    overlay = target_frame.copy()
+    # print(f"draw tile {rectangle_points}")
+    for point in rectangle_points:
+        overlay = cv2.rectangle(overlay, point[0], point[1], color, thickness=cv2.FILLED)  # draw tile
+        if grid:
+            overlay = cv2.rectangle(overlay, point[0], point[1], color=(0, 0, 0), thickness=3)  # draw grid
+    result = cv2.addWeighted(overlay, 0.5, target_frame, 0.5, 0)
+    return result
 
 
 def draw_viewport(target_frame, rectangle_point, color=(0, 0, 255), thickness=5):
@@ -167,19 +214,22 @@ def embed_frame(observation):
     return observation
 
 
-def ttest(max_epochs=0):
+def ttest(max_epochs=1):
     env = CustomEnv()
     epoch = 0
 
     buffer = ReplayBuffer(3000)
 
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     while epoch < max_epochs:
         obs, acs, next_obs, rewards, dones = [], [], [], [], []
-        ob, ac, _ = env.reset(trajectory=True, inference=False, saliency=True)
+        ob, ac, target_video = env.reset(trajectory=True, fx=1, fy=1, inference=False, saliency=False)
+        writer = cv2.VideoWriter(os.path.join("saliency", "test", target_video + "_" + ".mp4"),
+                                 fourcc, fps[target_video], (3840, 1920))
         while True:
             next_ob, reward, done, next_ac = env.step([0.1, 0.1])
-            # env.render(mode="tete")
-            transition = (ob, ac, reward, next_ob, done)
+            env.render(mode="tile", writer=writer)
+            # transition = (ob, ac, reward, next_ob, done)
             print(np.shape(ob), np.shape(next_ob), ac, next_ac, reward, done)
 
             # if len(buffer) >= 30:
@@ -210,4 +260,4 @@ def ttest(max_epochs=0):
 
 
 if __name__ == '__main__':
-    ttest(50)
+    ttest(5)

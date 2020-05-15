@@ -44,8 +44,12 @@ class Sal360:
         self.train, self.validation, self.test = self.load_sal360v2()
 
         self.target_videos = os.listdir(video_path)
+
         self.train_video_path = os.path.join(video_path, "train", "3840x1920")
         self.test_video_path = os.path.join(video_path, "test", "3840x1920")
+
+        # self.train_video_path = os.path.join(video_path, "train", "320x160")
+        # self.test_video_path = os.path.join(video_path, "test", "320x160")
 
         self.saliency_info = get_SalMap_info()
 
@@ -53,6 +57,7 @@ class Sal360:
 
         self.video = None
         self.saliency_map = None
+        self.target_video = None
 
     def load_sal360v2(self):
 
@@ -131,6 +136,9 @@ class Sal360:
         plt.title("test")
         plt.show()
 
+    def scatter_data(self, data):
+        data = np.transpose(data)
+
     def kl_divergence(self):
 
         state = np.array([(i[1] * 3840, i[2] * 1920) for i in self.data]).reshape([19, 57, 100, 2])
@@ -172,15 +180,96 @@ class Sal360:
 
         return x_dict, y_dict, path
 
+    def get_whole_data(self):
+        x_train_data, y_train_data = [], []
+        x_test_data, y_test_data = [], []
+
+        self.train_video_path = os.path.join(video_path, "train", "320x160")
+        self.test_video_path = os.path.join(video_path, "test", "320x160")
+
+        train = sorted(os.listdir(self.train_video_path))
+        test = sorted(os.listdir(self.test_video_path))
+        print(train)
+        print(test)
+        index = 0
+        for t in train:
+            if index == 0:
+                break
+            sal = read_SalMap(self.saliency_info[t])
+            v = self.get_video(self.train_video_path, 1, 1, t)
+            if len(v) == 501:
+                v = v[:-1]
+                sal = sal[:-1]
+            if len(v) == 601:
+                v = v[:-1]
+                sal = sal[:-1]
+            shape = np.shape(v)
+            width, height = shape[2], shape[1]
+            y_data = [cv2.resize(f, (width, height)) for f in sal]
+            del sal
+            y_data = np.expand_dims(y_data, 3).astype(np.float)
+
+            x_train_data.append(v)
+            y_train_data.append(y_data)
+            print(np.shape(y_data), np.shape(v), t)
+            # index += 1
+        t_idx = 0
+        for t in test:
+            if t_idx == 1:
+                break
+            t_idx += 1
+
+            sal = read_SalMap(self.saliency_info[t])
+            v = self.get_video(self.test_video_path, 1, 1, t)
+
+            if len(v) == 501:
+                v = v[:-1]
+                sal = sal[:-1]
+            if len(v) == 601:
+                v = v[:-1]
+                sal = sal[:-1]
+
+            shape = np.shape(v)
+            width, height = shape[2], shape[1]
+            y_data = [cv2.resize(f, (width, height)) for f in sal]
+            del sal
+            y_data = np.expand_dims(y_data, 3).astype(np.float)
+
+            x_test_data.append(v)
+            y_test_data.append(y_data)
+            print(np.shape(y_data), np.shape(v), t)
+
+        # x_train_data = tf.keras.preprocessing.sequence.pad_sequences(x_train_data, padding='post', maxlen=601, value=-1, dtype=float)
+        # y_train_data = tf.keras.preprocessing.sequence.pad_sequences(y_train_data, padding='post', maxlen=601, value=-1, dtype=float)
+        # x_test_data = tf.keras.preprocessing.sequence.pad_sequences(x_test_data, padding='post', maxlen=601, value=-1, dtype=float)
+        # y_test_data = tf.keras.preprocessing.sequence.pad_sequences(y_test_data, padding='post', maxlen=601, value=-1, dtype=float)
+
+        return (np.array(x_train_data), np.array(y_train_data)), (np.array(x_test_data), np.array(y_test_data))
+
     def select_trajectory(self, fx, fy, mode="train", target_video=None, randomness=True, saliency=False):
+        # pop_value = [1, 5, 9, 4, 7]
+        pop_value = []
         self.time_step = 0
+        if self.target_video is None:
+            prev_target = self.target_video
+        else:
+            prev_target = self.target_video
         if target_video is None:
             if mode == TRAIN:
-                self.target_video = random.choice(os.listdir(self.train_video_path))
+                p = os.listdir(self.train_video_path)
+                for v in pop_value:
+                    p.pop(v - 1)
+                self.target_video = random.choice(p)
             elif mode == TEST:
-                self.target_video = random.choice(os.listdir(self.test_video_path))
+                p = os.listdir(self.test_video_path)
+                for v in pop_value:
+                    p.pop(v - 1)
+                self.target_video = random.choice(p)
             elif mode == VALIDATION:
-                self.target_video = random.choice(os.listdir(self.train_video_path))
+                p = os.listdir(self.train_video_path)
+                for v in pop_value:
+                    p.pop(v - 1)
+                self.target_video = random.choice(p)
         else:
             self.target_video = target_video
 
@@ -191,13 +280,12 @@ class Sal360:
             ran_x, ran_y = x_dict[self.target_video][ran_idx], y_dict[self.target_video][ran_idx]
             self.x_iter, self.y_iter = iter(ran_x), iter(ran_y)
             self.video = self.get_video(path, fx, fy)
-            if saliency or self.saliency_map is None:
+            if self.target_video is not None and (saliency or self.target_video != prev_target):
                 self.saliency_map = self.get_saliency_map()
             return self.target_video
         else:
             if self.video is None:
                 self.video = self.get_video(path, fx, fy)
-                print(np.shape(self.video))
                 # self.saliency_map = self.get_saliency_map()
                 self.x_data, self.y_data = iter(x_dict[self.target_video]), iter(y_dict[self.target_video])
 
@@ -209,8 +297,10 @@ class Sal360:
 
             return self.target_video
 
-    def get_video(self, path, fx=0.3, fy=0.3):
-        cap = cv2.VideoCapture(os.path.join(path, self.target_video))
+    def get_video(self, path, fx=0.3, fy=0.3, target_video=None):
+        if target_video is None:
+            target_video = self.target_video
+        cap = cv2.VideoCapture(os.path.join(path, target_video))
         return read_whole_video(cap, fx=fx, fy=fy)
 
     def get_saliency_map(self):
@@ -257,9 +347,9 @@ class Sal360:
                 return total_ob, total_ac, total_done
 
     def next_data(self, trajectory=True):
-        x_data, y_data = next(self.x_iter), next(self.y_iter)
-        lat, lng, start_frame, end_frame = x_data[2], x_data[1], int(x_data[5]), int(x_data[6])
         if trajectory:
+            x_data, y_data = next(self.x_iter), next(self.y_iter)
+            lat, lng, start_frame, end_frame = x_data[2], x_data[1], int(x_data[5]), int(x_data[6])
             done = True if x_data[0] == 99 else False
             self.state = self.video[start_frame - 1:end_frame]
             if self.saliency_map is not None:
@@ -268,12 +358,14 @@ class Sal360:
                 self.saliency_state = None
             return self.state, self.saliency_state, lat, lng, y_data, done
         else:
-            frame_step = fps_list[self.target_video]
+            fps = fps_list[self.target_video]
+            frame_step = 5
             self.state = self.video[self.time_step:self.time_step + frame_step]
             self.saliency_state = self.saliency_map[self.time_step:self.time_step + frame_step]
             self.time_step += frame_step
-            done = True if frame_step * 20 == self.time_step else False
-            return self.state, self.saliency_state, lat, lng, y_data, done
+            done = True if fps * 20 == self.time_step else False
+            # return self.state, self.saliency_state, lat, lng, y_data, done
+            return self.state, self.saliency_state, None, None, None, done
 
 
 # class DataGenerator:
@@ -453,11 +545,57 @@ class Sal360:
 #             cap.release()
 #             cv2.destroyAllWindows()
 
-
+# def preprocessing(mean, std):
+#     def function(action):
+#         action = np.array(action)
+#         action = (action - mean) / std
+#         return action
+#     return function
+#
+# def depreprocessing(mean, std):
+#     def function(action):
+#         action = np.array(action)
+#         action = (action * std) + mean
+#         return action
+#     return function
+#
+# def normalize(mmin, mmax):
+#     def function(action):
+#         action = np.array(action)
+#         return (action - mmin) / (mmax - mmin)
+#
+#     return function
+#
+#
 if __name__ == '__main__':
     a = Sal360()
-    a.get_expert_trajectory(target_video="10_Cows.mp4")
-    # gen = DataGenerator.generator_for_batch(224, 224, type='validation')
-    # gen = DataGenerator.generator(224, 224)
-    # for x, y in gen:
-    pass
+    a.get_whole_data()
+#     target_videos = sorted(os.listdir(os.path.join(video_path, "train", "3840x1920")))
+#     x_dict, y_dict = a.train
+#     standard = {}
+#     item = [v for k, v in y_dict.items()]
+#
+#     item = np.reshape(item, [-1, 2])
+#     f = open("val.txt", "a")
+#     for video in target_videos:
+#         plt.figure()
+#         plt.title(video)
+#         # plt.xlim(xmin=-1, xmax=1)
+#         # plt.ylim(ymin=-1, ymax=1)
+#         item = np.reshape(y_dict[video], [-1,2])
+#         mean = np.mean(item, axis=0)
+#         std = np.std(item, axis=0)
+#         f.write(f"{video} {mean} {std}\n")
+#         # for action in y_dict[video]:
+#         #
+#         #     fnc = preprocessing(mean, std)
+#             # acs = list(map(fnc, action))
+#             # acs = np.array(acs)
+#             # plt.scatter(acs[:, 0], acs[:, 1])  # x, y
+#         # plt.savefig(os.path.join("plot", "trajectory", video + "_std_global.png"), format="png")
+#     f.close()
+#     # a.get_expert_trajectory(target_video="10_Cows.mp4")
+#     # gen = DataGenerator.generator_for_batch(224, 224, type='validation')
+#     # gen = DataGenerator.generator(224, 224)
+#     # for x, y in gen:
+#     pass

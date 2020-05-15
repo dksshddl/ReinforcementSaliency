@@ -17,8 +17,12 @@ def read_whole_video(cap, fx=0.3, fy=0.3):
         ret, frame = cap.read()
         if ret:
             frame = cv2.resize(frame, dsize=(0, 0), fx=fx, fy=fy)
+            # cv2.imshow("test",frame)
             video.append(frame)
+            # if cv2.waitKey(1) & 0xFF == ord('q'):
+            #     break
         else:
             cap.release()
             break
+    # cv2.destroyAllWindows()
     return video

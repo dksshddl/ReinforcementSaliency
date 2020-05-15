@@ -1,126 +1,154 @@
-import argparse
-import gym
-import numpy as np
-import tensorflow as tf
-from networks.policy_net import Policy_net
-from algo.ppo import PPOTrain
+import os
+import shutil
+import time
+from time import sleep
+
+from algo.ppo_tf import *
+from utils.ppo_trainer import Trainer
 from custom_env.envs import CustomEnv
-from utils.config import log_path, weight_path
+# from agents import GymEnvironment
 
+import tensorflow as tf
+import numpy as np
 
-def argparser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--logdir', help='log directory', default='log/train/ppo')
-    parser.add_argument('--savedir', help='save directory', default='trained_models/ppo')
-    parser.add_argument('--gamma', default=0.95, type=float)
-    parser.add_argument('--iteration', default=int(1e4), type=int)
-    return parser.parse_args()
+# ## Proximal Policy Optimization (PPO)
+# Contains an implementation of PPO as described [here](https://arxiv.org/abs/1707.06347).
 
+# Algorithm parameters
+# batch-size=<n>           How many experiences per gradient descent update step [default: 64].
+batch_size = 128
+# beta=<n>                 Strength of entropy regularization [default: 2.5e-3].
+beta = 2.5e-3
+# buffer-size=<n>          How large the experience buffer should be before gradient descent [default: 2048].
+buffer_size = batch_size * 32
+# epsilon=<n>              Acceptable threshold around ratio of old and new policy probabilities [default: 0.2].
+epsilon = 0.2
+# gamma=<n>                Reward discount rate [default: 0.99].
+gamma = 0.99
+# hidden-units=<n>         Number of units in hidden layer [default: 64].
+hidden_units = 128
+# lambd=<n>                Lambda parameter for GAE [default: 0.95].
+lambd = 0.95
+# learning-rate=<rate>     Model learning rate [default: 3e-4].
+learning_rate = 4e-5
+# max-steps=<n>            Maximum number of steps to run environment [default: 1e6].
+max_steps = 15e6
+# normalize                Activate state normalization for this many steps and freeze statistics afterwards.
+normalize_steps = 0
+# num-epoch=<n>            Number of gradient descent steps per batch of experiences [default: 5].
+num_epoch = 10
+# num-layers=<n>           Number of hidden layers between state/observation and outputs [default: 2].
+num_layers = 1
+# time-horizon=<n>         How many steps to collect per agent before adding to buffer [default: 2048].
+time_horizon = 2048
 
-gamma = 0.95
-iterations = 1000
+# General parameters
+# keep-checkpoints=<n>     How many model checkpoints to keep [default: 5].
+keep_checkpoints = 5
+# load                     Whether to load the model or randomly initialize [default: False].
+load_model = True
+# run-path=<path>          The sub-directory name for model and summary statistics.
+summary_path = './log/ppo'
+model_path = './weights/ppo'
+# summary-freq=<n>         Frequency at which to save training statistics [default: 10000].
+summary_freq = buffer_size * 5
+# save-freq=<n>            Frequency at which to save model [default: 50000].
+save_freq = summary_freq
+# train                    Whether to train model, or only run inference [default: False].
+train_model = False
+# render environment to display progress
+render = True
+# save recordings of episodes
+record = True
 
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # GPU is not efficient here
 
-def main(args):
-    # env = gym.make('CartPole-v0')
-    # env.seed(0)
-    env = CustomEnv()
-    ob_space = env.observation_space
-    Policy = Policy_net('policy', env)
-    Old_Policy = Policy_net('old_policy', env)
-    PPO = PPOTrain(Policy, Old_Policy, gamma=gamma)
-    saver = tf.train.Saver()
+env = CustomEnv()
+# env_render = GymEnvironment(env_name=env_name, log_path="./PPO_log_render", render=True, record=record)
+# fps = env_render.env.metadata.get('video.frames_per_second', 30)
 
-    with tf.Session() as sess:
-        writer = tf.summary.FileWriter(log_path, sess.graph)
-        sess.run(tf.global_variables_initializer())
-        obs, acs, target_video = env.reset()
-        success_num = 0
+print(str(env))
+# brain_name = env.external_brain_names[0]
 
-        for iteration in range(iterations):
-            observations = []
-            actions = []
-            pred_actions = []
-            rewards = []
-            v_preds = []
-            episode_length = 0
-            while True:  # run policy RUN_POLICY_STEPS which is much less than episode length
-                episode_length += 1
-                obs = np.array([obs]).astype(dtype=np.float32)  # prepare to feed placeholder Policy.obs
-                acs = np.array([acs]).astype(dtype=np.float32)
-                pred_act, v_pred = Policy.act(obs=obs, acs=acs, stochastic=True)
+tf.reset_default_graph()
 
-                # act = np.asscalar(act)
-                v_pred = np.asscalar(v_pred)
+ppo_model = create_agent_model(env, lr=learning_rate,
+                               h_size=hidden_units, epsilon=epsilon,
+                               beta=beta, max_step=max_steps,
+                               normalize=normalize_steps, num_layers=num_layers)
 
-                next_obs, reward, done, info = env.step(acs)
+is_continuous = True
+use_observations = True
+use_states = False
 
-                observations.append(obs)
-                actions.append(acs)
-                pred_actions.append(pred_act)
-                rewards.append(reward)
-                v_preds.append(v_pred)
+if not load_model:
+    shutil.rmtree(summary_path, ignore_errors=True)
 
-                if done:
-                    next_obs = np.stack([next_obs]).astype(dtype=np.float32)  # prepare to feed placeholder Policy.obs
-                    _, v_pred = Policy.act(obs=next_obs, stochastic=True)
-                    v_preds_next = v_preds[1:] + [np.asscalar(v_pred)]
-                    obs, acs, target_video = env.reset()
-                    break
-                else:
-                    obs = next_obs
+if not os.path.exists(model_path):
+    os.makedirs(model_path)
 
-            writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag='episode_length', simple_value=episode_length)])
-                               , iteration)
-            writer.add_summary(tf.Summary(value=[tf.Summary.Value(tag='episode_reward', simple_value=sum(rewards))])
-                               , iteration)
+if not os.path.exists(summary_path):
+    os.makedirs(summary_path)
 
-            if sum(rewards) >= 195:
-                success_num += 1
-                if success_num >= 100:
-                    saver.save(sess, weight_path + '/model.ckpt')
-                    print('Clear!! Model saved.')
-                    break
-            else:
-                success_num = 0
+tf.set_random_seed(np.random.randint(1024))
+init = tf.global_variables_initializer()
+saver = tf.train.Saver(max_to_keep=keep_checkpoints)
 
-            gaes = PPO.get_gaes(rewards=rewards, v_preds=v_preds, v_preds_next=v_preds_next)
+with tf.Session() as sess:
+    # Instantiate model parameters
+    if load_model:
+        print('Loading Model...')
+        ckpt = tf.train.get_checkpoint_state(model_path)
+        if ckpt is None:
+            print('The model {0} could not be found. Make sure you specified the right --run-path'.format(model_path))
+        saver.restore(sess, ckpt.model_checkpoint_path)
+    else:
+        sess.run(init)
 
-            # convert list to numpy array for feeding tf.placeholder
-            # observations = np.reshape(observations, newshape=[-1,] + list(ob_space.shape))
-            observations = np.array(observations).astype(dtype=np.float32)
+    steps, last_reward = sess.run([ppo_model.global_step, ppo_model.last_reward])
+    summary_writer = tf.summary.FileWriter(summary_path)
+    # info = env.reset()[brain_name]
+    info, ac, target_video = env.reset(trajectory=False, fx=0.3, fy=0.3, saliency=True, inference=False)
 
-            actions = np.array(actions).astype(dtype=np.float32)
-            gaes = np.array(gaes).astype(dtype=np.float32)
-            gaes = (gaes - gaes.mean()) / gaes.std()
-            rewards = np.array(rewards).astype(dtype=np.float32)
-            v_preds_next = np.array(v_preds_next).astype(dtype=np.float32)
+    trainer = Trainer(ppo_model, sess, info, is_continuous, use_observations, use_states, train_model)
+    # trainer_monitor = Trainer(ppo_model, sess, info, is_continuous, use_observations, use_states, False)
+    # render_started = False
 
-            PPO.assign_policy_parameters()
+    while steps <= max_steps or not train_model:
+        if env.global_done:
+            info = ob, ac, target_video = env.reset(trajectory=False, fx=0.3, fy=0.3, saliency=True,
+                                                    inference=False)
 
-            inp = [observations, actions, gaes, rewards, v_preds_next]
+            trainer.reset_buffers(info, total=True)
+        # Decide and take an action
+        if train_model:
+            info = trainer.take_action(info, env, brain_name, steps, normalize_steps, stochastic=True)
+            trainer.process_experiences(info, time_horizon, gamma, lambd)
+        else:
+            sleep(1)
+        if len(trainer.training_buffer['actions']) > buffer_size and train_model:
+            print("Optimizing...")
+            t = time.time()
+            # Perform gradient descent with experience buffer
+            trainer.update_model(batch_size, num_epoch)
+            print("Optimization finished in {:.1f} seconds.".format(float(time.time() - t)))
+        if steps % summary_freq == 0 and steps != 0 and train_model:
+            # Write training statistics to tensorboard.
+            trainer.write_summary(summary_writer, steps)
+        if steps % save_freq == 0 and steps != 0 and train_model:
+            # Save Tensorflow model
+            save_model(sess=sess, model_path=model_path, steps=steps, saver=saver)
+        if train_model:
+            steps += 1
+            sess.run(ppo_model.increment_step)
+            if len(trainer.stats['cumulative_reward']) > 0:
+                mean_reward = np.mean(trainer.stats['cumulative_reward'])
+                sess.run(ppo_model.update_reward, feed_dict={ppo_model.new_reward: mean_reward})
+                last_reward = sess.run(ppo_model.last_reward)
 
-            # train
-            for epoch in range(6):
-                # sample indices from [low, high)
-                sample_indices = np.random.randint(low=0, high=observations.shape[0], size=32)
-                sampled_inp = [np.take(a=a, indices=sample_indices, axis=0) for a in inp]  # sample training data
-                PPO.train(obs=sampled_inp[0],
-                          actions=sampled_inp[1],
-                          gaes=sampled_inp[2],
-                          rewards=sampled_inp[3],
-                          v_preds_next=sampled_inp[4])
-
-            summary = PPO.get_summary(obs=inp[0],
-                                      actions=inp[1],
-                                      gaes=inp[2],
-                                      rewards=inp[3],
-                                      v_preds_next=inp[4])
-
-            writer.add_summary(summary, iteration)
-        writer.close()
-
-
-if __name__ == '__main__':
-    args = argparser()
-    main(args)
+    # Final save Tensorflow model
+    if steps != 0 and train_model:
+        save_model(sess=sess, model_path=model_path, steps=steps, saver=saver)
+env.close()
+export_graph(model_path, env_name)
+os.system("shutdown")

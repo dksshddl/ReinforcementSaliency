@@ -1,6 +1,6 @@
 import os
 import datetime
-
+import copy
 import numpy as np
 import tensorflow as tf
 import cv2
@@ -13,7 +13,6 @@ from dataset import Sal360
 from utils.config import *
 
 max_ep_length = 5_000
-
 
 # 이거 쓰면 thread not safe 에러 --> stackoverflow에서 내부로유래
 # class DataGenerator(tf.keras.utils.Sequence):
@@ -38,7 +37,49 @@ max_ep_length = 5_000
 #         ob, ac, target_video = self.env.reset(video_type=self.video_type, trajectory=True, inference=False, fx=1, fy=1,
 #                                               saliency=True)
 #         self.ac = ac
+stand_dict = {
+    "01_PortoRiverside.mp4": [[-0.00014235, 0.00015636], [0.01457013, 0.12722483]],
+    "02_Diner.mp4": [[0.00035419, 0.00058077], [0.01710453, 0.13510216]],
+    "03_PlanEnergyBioLab.mp4": [[1.59446661e-04, 2.62226536e-05], [0.01516597, 0.13287633]],
+    "04_Ocean.mp4": [[-0.00010823, 0.00070909], [0.02380825, 0.14271857]],
+    "05_Waterpark.mp4": [[4.19333558e-04, -6.62591863e-05], [0.01721657, 0.11431039]],
+    "06_DroneFlight.mp4": [[0.00096727, -0.00010646], [0.02123786, 0.11721233]],
+    "07_GazaFishermen.mp4": [[8.66520711e-05, -1.80686089e-03], [0.0256012, 0.13320691]],
+    "08_Sofa.mp4": [[0.00014075, 0.00061949], [0.02242027, 0.11336181]],
+    "09_MattSwift.mp4": [[-0.00080271, -0.0011968], [0.0249275, 0.13625535]],
+    "10_Cows.mp4": [[-0.00026264, 0.00067812], [0.01957265, 0.12899429]],
+    "11_Abbottsford.mp4": [[0.00067969, 0.00065381], [0.02147157, 0.14254084]],
+    "12_TeatroRegioTorino.mp4": [[7.01761207e-05, -2.21156444e-04], [0.01814762, 0.1319638]],
+    "13_Fountain.mp4": [[0.00071678, 0.00064842], [0.02222087, 0.13347862]],
+    "14_Warship.mp4": [[-0.00022952, -0.00096409], [0.02872411, 0.09542387]],
+}
 
+
+def preprocessing(action):
+    action[0] *= 5
+    action[1] = action[1] * 4 if -0.25 < action[1] < 0.25 else action[1] * 2
+    return np.array([action])
+
+
+def depreprocessing(aa):
+    aa[1] /= 5
+    aa[1] = aa / 2 if aa[1] >= 1 else aa / 4
+    return np.array([aa])
+
+
+# def preprocessing(mean, std):
+#     def function(action):
+#         action = np.array(action)
+#         action = (action - mean) / std
+#         return action
+#     return function
+#
+# def depreprocessing(mean, std):
+#     def function(action):
+#         action = np.array(action)
+#         action = (action * std) + mean
+#         return action
+#     return function
 
 def test_gen(test_range):
     env = CustomEnv(video_type="test")
@@ -51,7 +92,7 @@ def test_gen(test_range):
             next_ob, reward, done, next_ac = env.step(ac)
             if done or val == 99:
                 break
-            yield np.array([ob]), np.array([ac])
+            yield np.array([ob]), preprocessing(ac)
             val += 1
             # history = np.concatenate([history, next_ob])
             ac = next_ac
@@ -70,7 +111,7 @@ def val_gen():
             if done or val == 99:
                 break
             # history = np.concatenate([history, next_ob])
-            yield np.array([ob]), np.array([ac])
+            yield np.array([ob]), preprocessing(ac)
             val += 1
             ac = next_ac
             ob = next_ob
@@ -87,7 +128,7 @@ def train_gen():
             next_ob, reward, done, next_ac = env.step(ac)
             if done or val == 99:
                 break
-            yield np.array([ob]), np.array([ac])
+            yield np.array([ob]), preprocessing(ac)
             val += 1
             # history = np.concatenate([history, next_ob])
             ac = next_ac
@@ -105,7 +146,7 @@ def learn():
     action_dim = list(custom_env.action_space.shape)
 
     model = Resnet(state_dim, session)
-
+    # model.restore()
     tf_writer = tf.summary.FileWriter(writer_path, session.graph)
 
     tensor_board_path = os.path.join(log_path, "supervised")
@@ -125,13 +166,14 @@ def learn():
     tensor_boarder_test = tf.keras.callbacks.TensorBoard(log_dir=os.path.join(log_path, "supervised", "test"),
                                                          batch_size=99,
                                                          update_freq="batch")
+    model.set_weight()
     model_saver = tf.keras.callbacks.ModelCheckpoint(
-        os.path.join(model_weight_path, "model.ckpt"), monitor="val_loss", save_best_only=True)
+        os.path.join(model_weight_path, "model.ckpt"), save_weights_only=True)
 
-    # early_stopper = tf.keras.callbacks.EarlyStopping(min_delta=0.0001, patience=50)
+    early_stopper = tf.keras.callbacks.EarlyStopping(min_delta=0.001, patience=5)
 
     model.model.fit_generator(train_gen(), 99, 5000, validation_data=val_gen(), validation_steps=99, shuffle=False,
-                              callbacks=[tensor_boarder, model_saver])
+                              callbacks=[tensor_boarder, model_saver, early_stopper])
 
     size = 10
     model.model.evaluate_generator(test_gen(size), [tensor_boarder_test])
@@ -147,7 +189,7 @@ def test():
     action_dim = list(custom_env.action_space.shape)
 
     model = Resnet(state_dim, session)
-
+    model.set_weight()
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     now = datetime.datetime.now().strftime("%d_%H-%M-%S")
 
@@ -159,7 +201,7 @@ def test():
                                                          batch_size=99,
                                                          update_freq="batch")
     size = 10
-    model.model.evaluate_generator(test_gen(size), steps=99, callbacks=[tensor_boarder_test])
+    # model.model.evaluate_generator(test_gen(size), steps=99, callbacks=[tensor_boarder_test])
 
     for i in range(10):
         obs, acs, target_videos = custom_env.reset(video_type="test", trajectory=True, inference=True, fx=1, fy=1)
@@ -172,6 +214,9 @@ def test():
 
         while True:
             pred_ac = model.model.predict(np.array([obs]))
+            print(pred_ac, acs)
+            # pred_ac = depreprocessing(pred_ac)
+            # print(pred_ac, acs)
             # pred_acs.append(pred_ac)
             # true_acs.append(acs)
             next_obs, rewards, dones, next_acs = custom_env.step(pred_ac)
@@ -202,13 +247,12 @@ def test():
         # plt.show()
 
 
-
 if __name__ == '__main__':
     # for x, y in train_gen():
     #     print(np.shape(x), np.shape(y))
 
-    learn()
-    # test()
+    # learn()
+    test()
     # for i, (x, y) in enumerate(train_gen()):
     #     losss = model.model.train_on_batch(x, y)
     #     print(f"loss: {losss})
@@ -261,6 +305,14 @@ class LossHistory(tf.keras.callbacks.Callback):
 
 
 class AccuracyHistory(tf.keras.callbacks.Callback):
+    def on_train_begin(self, logs=None):
+        pass
+
+    def on_batch_end(self, batch, logs=None):
+        pass
+
+
+class ModelSaver(tf.keras.callbacks.Callback):
     def on_train_begin(self, logs=None):
         pass
 
