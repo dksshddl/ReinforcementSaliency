@@ -1,10 +1,16 @@
+import os
+
 import tensorflow as tf
+import tensorflow_probability as tfp
+
+tfd = tfp.distributions
+
 import numpy as np
 
 # import tensorflow_probability as tfp
 
 batch_size = None
-n_samples = 5
+n_samples = None
 
 # class CustomKLDiagNormal(tfp.distributions.MultivariateNormalDiag):
 #     """Multivariate Normal with diagonal covariance and our custom KL code."""
@@ -45,7 +51,6 @@ kl_init_penalty = 1
 # Optimization
 update_every = 30
 update_epochs = 25
-optimizer = tf.train.AdamOptimizer
 learning_rate = 1e-4
 
 
@@ -55,75 +60,93 @@ class Policy_net:
         :param name: string
         :param env: gym env
         """
+        self.ob_space = env.observation_space.shape
+        self.act_space = env.action_space.shape
 
-        ob_space = env.observation_space
-        act_space = env.action_space
+        # before_softplus_std_initailizer = tf.keras.initializers.constant(np.log(np.exp(init_std) - 1))
+        # mean = tf.keras.layers.Dense(x, 2, activation="linear",
+        #                                 kernel_initializer=tf.random_normal_initializer(stddev=np.sqrt(0.01/)))
 
-        with tf.variable_scope(name):
-            # before_softplus_std_initailizer = tf.keras.initializers.constant(np.log(np.exp(init_std) - 1))
-            init_output_weights = tf.initializers.variance_scaling(scale=init_output_factor)
+        # std = tf.keras.activations.softplus(tf.get_variable("before_softplus_std", mean.shape[2:], tf.float32,
+        #                                                     initializer=before_softplus_std_initailizer))
+        # std = tf.tile(std[None, None], [tf.shape(mean)[0], tf.shape(mean)[1]] + [1] * (mean.shape.ndims - 2))
+        #
+        # policy = CustomKLDiagNormal(mean, std)
+        self.create_actor()
+        self.create_critic()
 
-            with tf.variable_scope('policy_net'):
-                state_in = tf.keras.layers.Input(batch_shape=[batch_size] + [n_samples] + list(ob_space.shape))
+    def create_actor(self):
+        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + [n_samples] + list(self.ob_space))
 
-                feature = tf.keras.Sequential()
-                feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-                feature.add(tf.keras.layers.BatchNormalization())
-                feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-                feature.add(tf.keras.layers.BatchNormalization())
-                feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-                feature.add(tf.keras.layers.BatchNormalization())
-                x = tf.keras.layers.TimeDistributed(feature)(state_in)
-                x = tf.keras.layers.Flatten()(x)
-                mean = tf.keras.layers.Dense(2, activation="tanh", kernel_initializer=init_output_weights)(x)
+        feature = tf.keras.Sequential()
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        x = tf.keras.layers.TimeDistributed(feature)(state_in)
+        x = tf.keras.layers.TimeDistributed(tf.keras.layers.GlobalAveragePooling2D())(x)
+        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128))(x)
+        mean = tf.keras.layers.Dense(2, activation="tanh")(x)
 
-                # mean = tf.keras.layers.Dense(x, 2, activation="linear",
-                #                                 kernel_initializer=tf.random_normal_initializer(stddev=np.sqrt(0.01/)))
+        self.policy_model = tf.keras.models.Model(inputs=state_in, outputs=mean)
+        self.policy_model.summary()
 
-                # std = tf.keras.activations.softplus(tf.get_variable("before_softplus_std", mean.shape[2:], tf.float32,
-                #                                                     initializer=before_softplus_std_initailizer))
-                # std = tf.tile(std[None, None], [tf.shape(mean)[0], tf.shape(mean)[1]] + [1] * (mean.shape.ndims - 2))
-                #
-                # policy = CustomKLDiagNormal(mean, std)
-                self.policy_model = tf.keras.models.Model(inputs=state_in, outputs=mean)
-                self.policy_model.summary()
-                logstd = tf.get_variable(name='logstd', shape=[1, 2],
-                                         initializer=tf.zeros_initializer())
-                std = tf.zeros_like(mean) + tf.exp(logstd)
-                self.dist = tf.distributions.Normal(loc=mean, scale=std)
+        # logstd = tf.zeros_like(mean)
+        # std = tf.exp(logstd)
+        # self.dist = tfd.Normal(loc=mean, scale=std).log_prob()
 
-                print(f"policy is {self.dist}")
+    def mean_std(self, obs, training):
+        mean = self.policy_model([obs], training=training)
+        std = tf.exp(tf.zeros_like(mean))
+        return mean, std
 
-            with tf.variable_scope('value_net'):
-                state_in = tf.keras.layers.Input(batch_shape=[batch_size] + [n_samples] + list(ob_space.shape))
+    def log_prob(self, mean, std, acs):
+        return tfd.Normal(loc=mean, scale=std).log_prob(acs)
 
-                feature = tf.keras.Sequential()
-                feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-                feature.add(tf.keras.layers.BatchNormalization())
-                feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-                feature.add(tf.keras.layers.BatchNormalization())
-                feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation="relu"))
-                feature.add(tf.keras.layers.BatchNormalization())
-                x = tf.keras.layers.TimeDistributed(feature)(state_in)
-                x = tf.keras.layers.Flatten()(x)
+    def get_preds(self, obs, training):
+        return self.value_model([obs], training=training)
 
-                self.v_preds = tf.keras.layers.Dense(1, activation="linear")(x)
+    def entropy(self, mean, std):
+        return tf.reduce_mean(tfd.Normal(loc=mean, scale=std).entropy())
 
-                self.value_model = tf.keras.models.Model(inputs=state_in, outputs=self.v_preds)
-                self.value_model.summary()
-            self.action = tf.reshape(self.dist.sample(1), [2])
-            self.scope = tf.get_variable_scope().name
+    def create_critic(self):
+        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + [n_samples] + list(self.ob_space))
 
-    def act(self, obs, stochastic=True):
-        return tf.get_default_session().run([self.action, self.v_preds],
-                                            feed_dict={self.policy_model.inputs: obs, self.value_model.inputs: obs})
+        feature = tf.keras.Sequential()
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        feature.add(tf.keras.layers.Conv2D(64, 3, 3, activation=tf.nn.leaky_relu))
+        x = tf.keras.layers.TimeDistributed(feature)(state_in)
+        x = tf.keras.layers.TimeDistributed(tf.keras.layers.GlobalAveragePooling2D())(x)
+        x = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(128))(x)
 
+        v_preds = tf.keras.layers.Dense(1, activation="linear")(x)
+        self.value_model = tf.keras.models.Model(inputs=state_in, outputs=v_preds)
+        self.value_model.summary()
+
+    def act(self, obs, training):
+        mean = self.policy_model([obs], training=training)
+        std = tf.exp(tf.zeros_like(mean))
+        action = tf.random.normal(mean.shape, mean=mean, stddev=std)
+        v_preds = self.value_model([obs], training=training)
+        return action, v_preds
+        # return tf.get_default_session().run([self.action, self.v_preds],
+        #                                     feed_dict={self.policy_model.inputs: obs, self.value_model.inputs: obs})
     def get_variables(self):
-        return tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, self.scope)
+        return self.value_model.get_weights()
 
     def get_trainable_variables(self):
-        return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope)
+        return self.value_model.get_weights()
+
+    def set_trainable_variables(self, weight):
+        self.value_model.set_weights(weight)
 
     def reset_states(self):
         self.value_model.reset_states()
         self.policy_model.reset_states()
+
+    def save(self):
+        checkpoint_directory = f"weights/gail/discriminator"
+        if not os.path.exists(checkpoint_directory):
+            os.mkdir(checkpoint_directory)
+        checkpoint_prefix = os.path.join(checkpoint_directory, "ckpt")
+        self.checkpoint.save(file_prefix=checkpoint_prefix)

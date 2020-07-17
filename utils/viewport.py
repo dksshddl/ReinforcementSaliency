@@ -45,7 +45,7 @@ class Viewport:
             left = [self.view[0], self.VIDEO_WIDTH] + self.view[2:]
             right = [0, self.view[1] - self.VIDEO_WIDTH] + self.view[2:]
         else:
-            self.view = [int(i) for i in self.view]
+            self.view = list(map(int, self.view))
             return
         self.view_dict['left'], self.view_dict['right'] = np.array(left, dtype=np.int), np.array(right, dtype=np.int)
         self.view = None
@@ -89,6 +89,8 @@ class Viewport:
 
     def set_center(self, c, normalize=False):
         if normalize:
+            c = np.clip(c, 0, 1)
+            c = np.reshape(c, [-1])
             c = c[0] * self.VIDEO_WIDTH, c[1] * self.VIDEO_HEIGHT
         self.center = np.array(c)
         self._build_view()
@@ -99,9 +101,10 @@ class TileViewport(Viewport):
         super(TileViewport, self).__init__(width, height)
         self.n = n
         self.m = m
-        self.tile_width = w / n
-        self.tile_height = h / m
+        self.tile_width = width / n
+        self.tile_height = height / m
         self.tile = None
+        self.active = True
 
     def set_center(self, c, normalize=False):
         super(TileViewport, self).set_center(c, normalize=normalize)
@@ -113,7 +116,7 @@ class TileViewport(Viewport):
 
     def tile_update(self):
         # form --> (x1, y1), (x2, y2)
-        self.tile = np.zeros([self.n, self.m])
+        self.tile = np.zeros([self.m, self.n])
         rec_point = self.get_rectangle_point()
 
         if self.view is None:  # rec point --> 2
@@ -125,11 +128,11 @@ class TileViewport(Viewport):
 
             _x1, _x2 = int(x1 // self.tile_width), int(x2 // self.tile_width)
             _y1, _y2 = int(y1 // self.tile_height), int(y2 // self.tile_height)
-            self.tile[_x1:_x2 + 1, _y1:_y2 + 1] = 1
+            self.tile[_y1:_y2 + 1, _x1:_x2 + 1] = 1
 
             _x11, _x22 = int(x11 // self.tile_width), int(x22 // self.tile_width)
             _y11, _y22 = int(y11 // self.tile_height), int(y22 // self.tile_height)
-            self.tile[_x11:_x22 + 1, _y11:_y22 + 1] = 1
+            self.tile[_y11:_y22 + 1, _x11:_x22 + 1] = 1
         else:
             # print("view")
             # print(rec_point)
@@ -139,16 +142,17 @@ class TileViewport(Viewport):
             _y1, _y2 = int(y1 // self.tile_height), int(y2 // self.tile_height)
             # print(f"(_x1, _x2), (_y1, _y2) : ({_x1}, {_x2}), ({_y1}, {_y2}) {rec_point}")
 
-            self.tile[_x1:_x2 + 1, _y1:_y2 + 1] = 1
-        # print(self.tile.transpose())
+            self.tile[_y1:_y2 + 1, _x1:_x2 + 1] = 1
 
     def tile_info(self):
         point = []
-        print(self.tile.transpose)
+        # t = self.tile.transpose()
+        # print(t)
         for i in range(self.n):
             for j in range(self.m):
-                if self.tile[i, j] == 1:
+                if self.tile[j, i] == 1:
                     point.append(self.tile_point(i, j))
+
         return point
 
     def tile_point(self, i, j):

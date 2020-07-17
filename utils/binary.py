@@ -5,7 +5,7 @@ import time
 import numpy as np
 import cv2
 
-from utils.config import saliency_map_H_path, fps
+from utils.config import saliency_map_H_path, fps, saliency_map_HE_path
 
 dtypes = {16: np.float16,
           32: np.float32,
@@ -13,7 +13,7 @@ dtypes = {16: np.float16,
 
 
 def get_SalMap_info():
-    data = os.listdir(saliency_map_H_path)
+    data = os.listdir(saliency_map_HE_path)
     data = [file for file in data if file.endswith(".bin")]
     get_file_info = re.compile("(\d+_\w+)_(\d+)x(\d+)x(\d+)_(\d+)b")
     sal_map_info = {}
@@ -72,6 +72,7 @@ def read_SalMap(info):
             data = np.fromfile(f, count=width * height, dtype=dtypes[dtype])
             # Reshape flattened data to 2D image
             full.append(data.reshape([height, width]))
+        print(np.shape(full))
     return full
 
 

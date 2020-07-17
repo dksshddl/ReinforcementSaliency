@@ -1,263 +1,275 @@
-# coding=utf8
-import os
+import datetime
+from tempfile import TemporaryFile
 
-import numpy as np
 import tensorflow as tf
+import numpy as np
+import cv2
 
-from utils import config
-from utils.config import log_path, weight_path
+from networks.Actor_ddpg import Actor
+from networks.Critic_ddpg import Critic
+from utils.config import *
+from custom_env.envs import CustomEnv
 
-#### HYPER PARAMETERS ####
-gamma = 0.99  # reward discount factor
+# Recurrent Deterministic Policy Gradient
+from utils.ou_noise import OUNoise
+from utils.replay import ReplayBuffer
 
-lr_critic = 1e-3  # learning rate for the critic
-lr_actor = 1e-4  # learning rate for the actor
+gamma = 0.99
 
-batch_size = 1
-n_samples = 30
+action_arr = [
+    [0, 0],
+    [0.0275, 0],
+    [-0.0275, 0],
+    [0, 0.035],
+    [0, -0.035]
+]
 
 
-# tau = 1e-2  # soft target update rate
+class Ddpg:
+    def __init__(self, obs_dim, acs_dim, mode=None):
+        gpus = tf.config.experimental.list_physical_devices('GPU')
+        if gpus:
+            try:
+                tf.config.experimental.set_memory_growth(gpus[0], True)
+            except RuntimeError as e:
+                # 프로그램 시작시에 메모리 증가가 설정되어야만 합니다
+                print(e)
 
+        if mode is not None:
+            self.mode = mode
+        else:
+            self.mode = RDPG_discrete
+        self.sess = tf.Session()
 
-class DDPG:
-    def __init__(self, sess, state_dim, action_dim, action_max, action_min, load=None):
-        self.sess = sess
+        self.obs_dim = list(obs_dim)
+        self.acs_dim = acs_dim
 
-        self.state_dim = state_dim  # [6, 224, 224, 3]
-        self.action_dim = action_dim  # [2]
-        self.action_max = float(action_max)
-        self.action_min = float(action_min)
+        self.actor = Actor(self.sess, self.obs_dim, self.acs_dim, "actor")
+        self.actor_target = Actor(self.sess, self.obs_dim, self.acs_dim, "actor_target")
 
-        self.state_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + [n_samples] + self.state_dim)
-        self.reward_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
-        self.next_state_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.state_dim)
-        self.action_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.action_dim)
-        self.action_grad_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size] + self.action_dim)
-        self.done_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
-        self.qvalue_ph = tf.compat.v1.placeholder(dtype=tf.float32, shape=[batch_size, 1])
+        self.critic = Critic(self.sess, self.obs_dim, self.acs_dim, "critic")
+        self.critic_target = Critic(self.sess, self.obs_dim, self.acs_dim, "critic_target")
 
-        # self.feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
-        # self.feature_tareget = tf.keras.applications.ResNet50(include_top=False, weights=None)
+        self.saver = tf.train.Saver()
 
-        with tf.compat.v1.variable_scope('actor'):
-            # self.actor = self.generate_resnet_actor(trainable=True)
-            self.actor = self.generate_actor_network(trainable=True)
-        with tf.compat.v1.variable_scope('target_actor'):
-            # self.target_actor = self.generate_resnet_actor(trainable=False)
-            self.target_actor = self.generate_actor_network(trainable=False)
-        with tf.compat.v1.variable_scope('critic'):
-            # self.critic = self.generate_resnet_critic(trainable=True)
-            self.critic = self.generate_critic_network(trainable=True)
-        with tf.compat.v1.variable_scope('target_critic'):
-            # self.target_critic = self.generate_resnet_critic(trainable=False)
-            self.target_critic = self.generate_critic_network(trainable=False)
+        self.sess.run(tf.global_variables_initializer())
 
-        self.actor.summary()
-        self.critic.summary()
-
-        self.action_grad = tf.gradients(self.critic.output, self.critic.input[1])  # q_value, action
-        self.params_grad = tf.gradients(self.actor.output, self.actor.trainable_weights, -self.action_grad_ph)
-        self.critic_loss = tf.compat.v1.losses.mean_squared_error(self.qvalue_ph, self.critic.output)
-
-        self.critic_opt = tf.compat.v1.train.AdamOptimizer(learning_rate=lr_critic).minimize(self.critic_loss)
-        self.actor_opt = tf.compat.v1.train.AdamOptimizer(learning_rate=lr_actor) \
-            .apply_gradients(zip(self.params_grad, self.actor.trainable_weights))
-
-        self.sess.run(tf.compat.v1.global_variables_initializer())
-        self.saver = tf.compat.v1.train.Saver()
-        writer_path = os.path.join(log_path, config.DDPG_RESNET)
+        writer_path = os.path.join(log_path, self.mode)
         if not os.path.exists(writer_path):
             os.mkdir(writer_path)
         self.writer = tf.compat.v1.summary.FileWriter(writer_path, self.sess.graph)
-        self.critic_loss_summary = tf.compat.v1.summary.scalar("critic_loss", self.critic_loss)
+        self.exploration = True
 
-        if load is not None:
-            self.load(load)
+        self.env = CustomEnv()
+        self.noise = OUNoise(2)
+        self.replay_buffer = ReplayBuffer(10_000)
 
-    def gradients(self, states, actions):
-        feed_dict = {self.critic.inputs[0]: states, self.critic.inputs[1]: actions}
-        return self.sess.run(self.action_grad, feed_dict=feed_dict)[0]
+    def train(self):
+        global_step = 0
+        epoch = 0
 
-    def target_critic_train(self, tau=0.001):
-        critic_weights = self.critic.get_weights()
-        critic_target_weights = self.target_critic.get_weights()
-        for i in range(len(critic_weights)):
-            critic_target_weights[i] = tau * critic_weights[i] + (1 - tau) * critic_target_weights[i]
-        self.target_critic.set_weights(critic_target_weights)
+        self.exploration = True
 
-    def target_actor_train(self, tau=0.001):
-        actor_weights = self.actor.get_weights()
-        actor_target_weights = self.target_actor.get_weights()
-        for i in range(len(actor_weights)):
-            actor_target_weights[i] = tau * actor_weights[i] + (1 - tau) * actor_target_weights[i]
-        self.target_actor.set_weights(actor_target_weights)
+        while True:
+            ob, ac, target_video = self.env.reset(trajectory=False, fx=0.3, fy=0.3, saliency=True, inference=False)
+            transition = [[], [], [], []]
+            ep_reward = 0
+            while True:
+                ac = self.actor.get_action(np.array([ob]))
+                ac = np.reshape(ac, [-1, 2])
+                ac = ac[-1] + self.noise.noise()
 
-    def train_actor(self, state, action_grads, step=None):
-        feed_dict = {self.actor.inputs[0]: state, self.action_grad_ph: action_grads}
-        self.sess.run(self.actor_opt, feed_dict=feed_dict)
+                next_ob, reward, done, next_ac = self.env.step(ac)
+                reward = reward * 10  # scaling reward
 
-    def train_critic(self, state, action, q_value, step=None):
-        feed_dict = {self.critic.inputs[0]: state, self.critic.inputs[1]: action, self.qvalue_ph: q_value}
-        _, summary = self.sess.run([self.critic_opt, self.critic_loss_summary], feed_dict=feed_dict)
-        self.writer.add_summary(summary, step)
+                if done:
+                    self.noise.reset()
+                    epoch += 1
+                    if epoch >= 100:
+                        self.exploration = False
+                    break
 
-    def predict(self, state):
-        return self.actor.predict([state])
+                transition[0] = [ob]
+                transition[1] = ac
+                transition[2] = reward
+                transition[3] = [next_ob]
+
+                ob = next_ob
+                self.learn_batch(transition)
+                transition = [[], [], [], []]
+
+                ep_reward += reward
+
+            print(f"episode {target_video}, reward {ep_reward}, step {global_step}, epochs {epoch}")
+            reward_summary = tf.Summary(value=[tf.Summary.Value(tag=target_video, simple_value=ep_reward)])
+            self.writer.add_summary(reward_summary, global_step)
+            self.save()
+            if not self.exploration and ep_reward > 1500:
+                break
+            global_step += 1
+
+    def test(self, max_epochs=10, save_path=None):
+        if save_path is None:
+            save_path = os.path.join(weight_path, self.mode, "model_rdpg.ckpt")
+        self.saver.restore(self.sess, save_path)
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+
+        epoch = 0
+
+        while epoch < max_epochs:
+            ob, ac, target_video = self.env.reset(trajectory=False, fx=1, fy=1, saliency=True, inference=True, target_video="11_Abbottsford.mp4")
+            history = ob
+            print(f"start test {target_video}")
+            out = os.path.join(output_path, self.mode)
+            if not os.path.exists(out):
+                os.mkdir(out)
+            now = datetime.datetime.now().strftime("%d_%H-%M-%S")
+
+            writer = cv2.VideoWriter(os.path.join(out, target_video + "_" + str(now) + ".mp4"),
+                                     fourcc, fps[target_video], (3840, 1920))
+            ep_reward = 0
+            while True:
+                pred_ac = self.actor.get_action(np.array([history]))
+                pred_ac = np.reshape(pred_ac, [-1, 2])
+                # noise_ac = np.squeeze(pred_ac) + self.noise.noise()
+                next_ob, reward, done, next_ac = self.env.step(pred_ac[-1])
+                reward = reward * 10
+
+                self.env.render(writer=writer)
+                if done:
+                    break
+                ep_reward += reward
+                history += next_ob
+                # history["actions"].append(ac)
+                # history["rewards"].append(reward)
+            print(f"{target_video}'s total reward is {ep_reward}")
+            epoch += 1
 
     def save(self, epochs=None):
-        model_save_path = os.path.join(weight_path, config.DDPG_RESNET)
+        model_save_path = os.path.join(weight_path, self.mode)
+
         if not os.path.exists(model_save_path):
             os.mkdir(model_save_path)
 
         if epochs is None:
-            self.saver.save(self.sess, os.path.join(model_save_path, 'model_ddpg' + '.ckpt'))
+            self.saver.save(self.sess, os.path.join(model_save_path, "model_rdpg.ckpt"))
         else:
-            self.saver.save(self.sess, os.path.join(model_save_path, 'model_ddpg_' + str(epochs) + '.ckpt'))
+            self.saver.save(self.sess, os.path.join(model_save_path, f"model_rdpg_{epochs}.ckpt"))
 
-    def load(self, load_path):
-        self.saver.restore(self.sess, load_path)
+    def load(self, save_path=None):
+        if save_path is None:
+            save_path = os.path.join(weight_path, self.mode, "model_rdpg.ckpt")
+        self.saver.restore(self.sess, save_path)
 
-    # policy
-    def generate_critic_network(self, trainable):
-        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
-        action_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.action_dim)
+    def soft_target_update(self, tau=0.001):
+        critic_weight = self.critic.get_weights()
+        critic_target_weight = self.critic_target.get_weights()
 
-        weight_decay = tf.keras.regularizers.l2(0.001)
-        final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
+        actor_weight = self.actor.get_weights()
+        actor_target_weight = self.actor_target.get_weights()
 
-        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(state_in)
-        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=False, stateful=True, trainable=trainable)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        # x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        x = tf.keras.layers.Flatten(trainable=trainable)(x)
+        for i in range(len(critic_weight)):
+            critic_target_weight[i] = tau * critic_weight[i] + (1 - tau) * critic_target_weight[i]
+        for i in range(len(actor_weight)):
+            actor_target_weight[i] = tau * actor_weight[i] + (1 - tau) * actor_target_weight[i]
 
-        y = tf.keras.layers.Dense(128, activation="relu")(action_in)
-        y = tf.keras.layers.Dense(64, activation="relu")(y)
-        concat = tf.keras.layers.concatenate([x, y])
+        self.critic_target.set_weights(critic_target_weight)
+        self.actor_target.set_weights(actor_target_weight)
 
-        x = tf.keras.layers.Dense(1, activation="linear", activity_regularizer=weight_decay,
-                                  kernel_initializer=final_initializer, bias_initializer=final_initializer)(concat)
+    def learn(self, buf_data):
+        self.replay_buffer.append(buf_data)
 
-        model = tf.keras.models.Model(inputs=[state_in, action_in], outputs=x)
-        model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.compat.v1.losses.mean_squared_error)
-        return model
+        batch_size = 128
+        if len(self.replay_buffer) >= 100:
+            self.exploration = False
+            batches = self.replay_buffer.get_batch(batch_size)  # --> [40, :, :, :, :]
+            print("train start ", np.shape(batches))
 
-    # action-value
-    def generate_actor_network(self, trainable):
-        state_in = tf.keras.layers.Input(batch_shape=[batch_size] + self.state_dim)
+            for history in batches:  # batch --> [5, 5, 5, 5, 5]
+                observations = history[0][:-1]  # [batch_size, o_t, dim]
+                next_observation = np.roll(history[0], -1)[:-1]  # [batch_size, o_t1, dim]
 
-        final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
+                actions = history[1]  # [batch_size, a_t, 2]
+                rewards = history[2]  # [batch_size, r, 1]
+                rewards = np.reshape(rewards, [1, -1, 1])
 
-        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(state_in)
-        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True, trainable=trainable)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=False, stateful=True, trainable=trainable)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        # x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        x = tf.keras.layers.Flatten(trainable=trainable)(x)
+                # critic update
+                a_t1 = self.actor_target.get_action(np.array([next_observation]))
+                q_t1 = self.critic_target.get_q_value(np.array([next_observation]), a_t1)
+                # y_t = rewards + gamma * q_t1[0]
+                y_t = rewards + q_t1  # episodic
+                self.critic.train(np.array([observations]), np.array([actions]), y_t)
 
-        x = tf.keras.layers.Dense(2, activation="tanh", bias_initializer=final_initializer,
-                                  kernel_initializer=final_initializer)(x)
+                # actor update
+                a_for_grad = self.actor.get_action(np.array([observations]))
+                gradients = self.critic.get_q_gradient(np.array([observations]), a_for_grad)
+                gradients = np.reshape(gradients, [1, -1, 2])
+                self.actor.train(np.array([observations]), gradients)
 
-        x = tf.keras.layers.Dense(2, trainable=trainable)(x)
+        self.soft_target_update()
 
-        model = tf.keras.models.Model(inputs=state_in, outputs=x)
-        return model
+    def learn_batch(self, buf_data):
+        self.replay_buffer.append(buf_data)
 
-    def generate_resnet_critic(self, trainable):
-        state_in = tf.keras.layers.Input(shape=self.state_dim)
-        action_in = tf.keras.layers.Input(shape=self.action_dim)
+        batch_size = 64
+        if not self.exploration:
+            batches = self.replay_buffer.get_batch(batch_size)  # --> [batch_size, :, :, :, :]
+            # print("train start ", np.shape(batches))
 
-        weight_decay = tf.keras.regularizers.l2(0.001)
-        conv_initializer1 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-        conv_initializer2 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-        conv_initializer3 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-        lstm_initailizer = tf.keras.initializers.RandomUniform(-1 / 256, 1 / 256)
-        dense_initializer = tf.keras.initializers.RandomUniform(-1 / 200, 1 / 200)
-        final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
+            batches = np.array(batches)
 
-        x = tf.keras.models.Sequential()
-        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer1,
-                                     bias_initializer=conv_initializer1))
-        x.add(tf.keras.layers.BatchNormalization())
-        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer2,
-                                     bias_initializer=conv_initializer2))
-        x.add(tf.keras.layers.BatchNormalization())
-        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer3,
-                                     bias_initializer=conv_initializer3))
-        x.add(tf.keras.layers.BatchNormalization())
+            ob = batches[:, 0]  # 32,
+            ob = np.vstack(ob)
 
-        x = tf.keras.layers.TimeDistributed(x)(state_in)
-        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        x = tf.keras.layers.Bidirectional(
-            tf.keras.layers.LSTM(256, kernel_initializer=lstm_initailizer, bias_initializer=lstm_initailizer,
-                                 recurrent_initializer=lstm_initailizer))(x)
-        y = tf.keras.layers.Dense(200, activation="relu", kernel_initializer=dense_initializer,
-                                  bias_initializer=dense_initializer)(action_in)
-        y = tf.keras.layers.Dense(200, activation="relu", kernel_initializer=dense_initializer,
-                                  bias_initializer=dense_initializer)(y)
-        concat = tf.keras.layers.concatenate([x, y])
-        # x = tf.keras.layers.Dropout(0.5)(concat)
-        x = tf.keras.layers.Dense(1, activation="linear", activity_regularizer=weight_decay,
-                                  kernel_initializer=final_initializer, bias_initializer=final_initializer)(concat)
-        model = tf.keras.models.Model(inputs=[state_in, action_in], outputs=x)
-        model.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.compat.v1.losses.mean_squared_error)
-        return model
+            action = batches[:, 1]  # 32, 2
+            action = np.vstack(action)
 
-    def generate_resnet_actor(self, trainable):
-        state_in = tf.keras.layers.Input(shape=self.state_dim)
+            reward = batches[:, 2].reshape([batch_size, 1])  # 32, 1
+            reward = np.vstack(reward)
 
-        conv_initializer1 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-        conv_initializer2 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-        conv_initializer3 = tf.keras.initializers.RandomUniform(-1 / 32, 1 / 32)
-        final_initializer = tf.keras.initializers.RandomUniform(-0.0003, 0.0003)
-        lstm_initailizer = tf.keras.initializers.RandomUniform(-1 / 256, 1 / 256)
-        # feature = tf.keras.applications.ResNet50(include_top=False, weights=None)
-        x = tf.keras.models.Sequential()
-        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer1,
-                                     bias_initializer=conv_initializer1))
-        x.add(tf.keras.layers.BatchNormalization())
-        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer2,
-                                     bias_initializer=conv_initializer2))
-        x.add(tf.keras.layers.BatchNormalization())
-        x.add(tf.keras.layers.Conv2D(32, 3, 3, activation=tf.nn.leaky_relu, kernel_initializer=conv_initializer3,
-                                     bias_initializer=conv_initializer3))
-        x.add(tf.keras.layers.BatchNormalization())
+            next_ob = batches[:, 3]
+            next_ob = np.vstack(next_ob)
+            # print(np.shape(history[0]), np.shape(history[1]))
+            # next_hist = [np.roll(h, -1)[:-1] for h in history]
+            # history = [h[:-1] for h in history]
 
-        x = tf.keras.layers.TimeDistributed(x)(state_in)
-        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
+            at = self.actor_target.get_action(np.array(next_ob))
+            qt = self.critic_target.get_q_value(np.array(next_ob), at)
+            yt = np.array(reward) + np.array(qt)
+            self.critic.train(ob, action, yt)
 
-        x = tf.keras.layers.Bidirectional(
-            tf.keras.layers.LSTM(256, kernel_initializer=lstm_initailizer, bias_initializer=lstm_initailizer,
-                                 recurrent_initializer=lstm_initailizer))(x)
-        # x = tf.keras.layers.Dropout(0.5)(x)
-        x = tf.keras.layers.Dense(2, activation="tanh", bias_initializer=final_initializer,
-                                  kernel_initializer=final_initializer)(x)
-        model = tf.keras.models.Model(inputs=state_in, outputs=x)
-        return model
+            a_for_grad = self.actor.get_action(ob)
+            # gradients = self.critic.get_q_gradient(history, a_for_grad)
+            grads = self.critic.get_q_gradient(ob, a_for_grad)
+            grads = np.reshape(grads, [-1, 2])
+            self.actor.train(ob, grads)
 
-    def save_actor_weights(self, path):
-        self.actor.save_weights(path)
 
-    def save_critic_weights(self, path):
-        self.critic.save_weights(path)
+class CriticGenerator(tf.keras.utils.Sequence):
+    def __init__(self, x1, x2, y, batch_size):
+        self.x1, self.x2, self.y = x1, x2, y
+        self.batch_size = batch_size
 
-    def load_weights(self, actor_path, critic_path):
-        self.actor.load_weights(actor_path)
-        self.critic.load_weights(critic_path)
+    def __len__(self):
+        return self.batch_size
 
-    def load_all(self, path):
-        self.saver.restore(self.sess, path)
+    def __getitem__(self, item):
+        return [np.array([self.x1[item]]), np.array([self.x2[item]])], self.y[item]
 
-    def reset_state(self):
-        self.actor.reset_states()
-        self.critic.reset_states()
-        self.target_actor.reset_states()
-        self.target_critic.reset_states()
+
+class DataGenerator(tf.keras.utils.Sequence):
+    def __init__(self, x, y, batch_size):
+        self.x, self.y = x, y
+        self.batch_size = batch_size
+
+    def __len__(self):
+        return self.batch_size
+
+    def __getitem__(self, item):
+        return np.array([self.x[item]]), self.y[item]
+
+
+if __name__ == '__main__':
+    agent = Ddpg((84, 84, 3), 2)
+    agent.train(5000)

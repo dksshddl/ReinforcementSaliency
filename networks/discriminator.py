@@ -1,7 +1,18 @@
-import tensorflow as tf
+import os
 
-batch_size = 1
-n_samples = 8
+import tensorflow as tf
+import numpy as np
+from tensorflow.keras.layers import Input, Dense, Conv2D, LSTM
+
+batch_size = None
+n_samples = None
+
+
+def discriminator_loss(y_true, y_pred):
+    loss_expert = tf.reduce_mean(tf.math.log(tf.clip_by_value(y_true, 0.01, 1)))
+    loss_agent = tf.reduce_mean(tf.math.log(tf.clip_by_value(1 - y_pred, 0.01, 1)))
+    l = loss_expert + loss_agent
+    return -l
 
 
 class Discriminator:
@@ -12,70 +23,63 @@ class Discriminator:
         Because discriminator predicts  P(expert|s,a) = 1 - P(agent|s,a).
         """
 
-        with tf.variable_scope('discriminator'):
-            self.scope = tf.get_variable_scope().name
-            self.expert_s = tf.placeholder(dtype=tf.float32,
-                                           shape=[batch_size] + [n_samples] + list(env.observation_space.shape))
-            self.expert_a = tf.placeholder(dtype=tf.float32, shape=[batch_size] + list(env.action_space.shape))
-            # expert_a_one_hot = tf.one_hot(self.expert_a, depth=env.action_space.n)
-            # add noise for stabilise training
-            # expert_a_one_hot += tf.random_normal(tf.shape(expert_a_one_hot), mean=0.2, stddev=0.1, dtype=tf.float32)/1.2
-            # expert_s_a = tf.concat([self.expert_s, expert_a_one_hot], axis=1)
+        state = Input(dtype=tf.float32, batch_shape=[batch_size] + [n_samples] + list(env.observation_space.shape))
+        action = Input(dtype=tf.float32, batch_shape=[batch_size] + list(env.action_space.shape))
 
-            self.agent_s = tf.placeholder(dtype=tf.float32,
-                                          shape=[batch_size] + [n_samples] + list(env.observation_space.shape))
-            self.agent_a = tf.placeholder(dtype=tf.float32, shape=[batch_size] + list(env.action_space.shape))
-            # agent_a_one_hot = tf.one_hot(self.agent_a, depth=env.action_space.n)
-            # add noise for stabilise training
-            # agent_a_one_hot += tf.random_normal(tf.shape(agent_a_one_hot), mean=0.2, stddev=0.1, dtype=tf.float32)/1.2
-            # agent_s_a = tf.concat([self.agent_s, agent_a_one_hot], axis=1)
-
-            with tf.variable_scope('network') as network_scope:
-                self.model_expert = self.construct_network(self.expert_s, self.expert_a)
-                network_scope.reuse_variables()  # share parameter
-                self.model_agent = self.construct_network(self.agent_s, self.agent_a)
-
-            with tf.variable_scope('loss'):
-                loss_expert = tf.reduce_mean(tf.log(tf.clip_by_value(self.model_expert.outputs, 0.01, 1)))
-                loss_agent = tf.reduce_mean(tf.log(tf.clip_by_value(1 - self.model_agent.outputs, 0.01, 1)))
-                loss = loss_expert + loss_agent
-                loss = -loss
-                tf.summary.scalar('discriminator', loss)
-
-            optimizer = tf.train.AdamOptimizer()
-            self.train_op = optimizer.minimize(loss)
-
-            self.rewards = tf.log(tf.clip_by_value(self.model_agent.outputs, 1e-10, 1))  # log(P(expert|s,a)) larger is better for agent
-
+        self.model = self.construct_network(state, action)
+        self.optimizer = tf.optimizers.Adam(1e-4)
+        self.checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, model=self.model)
+        self.step = 0
     def construct_network(self, input_s, input_a):
-        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Masking(256))(input_s)
-        x = tf.keras.layers.ConvLSTM2D(128, 3, 3, return_sequences=True, stateful=True)(x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(64, 3, 3, return_sequences=True, stateful=True)(inputs=x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.ConvLSTM2D(32, 3, 3, return_sequences=False, stateful=True)(inputs=x)
-        x = tf.keras.layers.BatchNormalization()(x)
-        x = tf.keras.layers.Flatten()(x)
+        feature = tf.keras.applications.mobilenet_v2.MobileNetV2((160, 160, 3), include_top=False, pooling="avg")
+
+        x = tf.keras.layers.TimeDistributed(feature)(input_s)
+        x = tf.keras.layers.LSTM(128)(x)
+
         y = tf.keras.layers.Dense(128, activation="relu")(input_a)
         y = tf.keras.layers.Dense(128, activation="relu")(y)
         concat = tf.keras.layers.concatenate([x, y])
         prob = tf.keras.layers.Dense(1, activation="sigmoid")(concat)
-        model = tf.kras.models.Model(inputs=[input_s, input_a], outputs=prob)
+        model = tf.keras.models.Model(inputs=[input_s, input_a], outputs=prob)
         return model
 
     def reset_state(self):
-        self.model_agent.reset_states()
-        self.model_expert.reset_states()
+        self.model.reset_states()
 
-    def train(self, expert_s, expert_a, agent_s, agent_a):
-        return tf.get_default_session().run(self.train_op, feed_dict={self.expert_s: expert_s,
-                                                                      self.expert_a: expert_a,
-                                                                      self.agent_s: agent_s,
-                                                                      self.agent_a: agent_a})
+    def train(self, expert_s, expert_a, agent_s, agent_a, epochs=2):
+        for _ in range(epochs):
+            self.step += 1
+            batch_grad = []
+            for ex_s, ex_a, ag_s, ag_a in zip(expert_s, expert_a, agent_s, agent_a):
+                episode_grad = []
+                for s1, a1, s2, a2 in zip(ex_s, ex_a, ag_s, ag_a):
+                    with tf.GradientTape() as tape:
+                        expert_prob = self.model([s1, a1], training=True)
+                        agent_prob = self.model([s2, a2], training=True)
+                        loss = discriminator_loss(expert_prob, agent_prob)
+                    grads = tape.gradient(loss, self.get_trainable_variables())
+
+                    episode_grad.append(grads)
+                episode_grad = np.transpose(episode_grad)
+                episode_grad = episode_grad.tolist()
+                episode_grad = [tf.reduce_mean(i, axis=0) for i in episode_grad]
+                batch_grad.append(episode_grad)
+            batch_grad = np.transpose(batch_grad)
+            batch_grad = batch_grad.tolist()
+            batch_grad = [tf.reduce_mean(i, axis=0) for i in batch_grad]
+            self.optimizer.apply_gradients(zip(batch_grad, self.get_trainable_variables()))
+            tf.summary.scalar('discriminator', float(loss), self.step)
+
+    def save(self):
+        checkpoint_directory = f"weights/gail/discriminator"
+        if not os.path.exists(checkpoint_directory):
+            os.mkdir(checkpoint_directory)
+        checkpoint_prefix = os.path.join(checkpoint_directory, "ckpt")
+        self.checkpoint.save(file_prefix=checkpoint_prefix)
 
     def get_rewards(self, agent_s, agent_a):
-        return tf.get_default_session().run(self.rewards, feed_dict={self.agent_s: agent_s,
-                                                                     self.agent_a: agent_a})
+        reward = self.model([agent_s, agent_a])
+        return tf.math.log(tf.clip_by_value(reward, 1e-10, 1))
 
     def get_trainable_variables(self):
-        return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope)
+        return self.model.trainable_variables
