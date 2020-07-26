@@ -1,328 +1,421 @@
 import os
-import datetime
-import copy
+import random
+
+import cv2
 import numpy as np
 import tensorflow as tf
-import cv2
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+from tensorflow import keras
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import ConvLSTM2D, Input, Flatten, TimeDistributed, Dense, LSTM, Bidirectional, Reshape, \
+    MaxPooling2D, Dropout, BatchNormalization
+import py360convert
 
 from custom_env.envs import CustomEnv
-from networks.resnet import Resnet
 from dataset import Sal360
-from utils.config import *
-
-max_ep_length = 5_000
-
-# 이거 쓰면 thread not safe 에러 --> stackoverflow에서 내부로유래
-# class DataGenerator(tf.keras.utils.Sequence):
-#     def __init__(self, video_type="train"):
-#         self.env = CustomEnv(video_type=video_type)
-#
-#         ob, ac, target_video = self.env.reset(video_type=video_type, trajectory=True, inference=False, fx=1, fy=1,
-#                                               saliency=True)
-#         self.video_type = video_type
-#         self.ac = ac
-#         self.history = []
-#
-#     def __len__(self):
-#         return 98
-#
-#     def __getitem__(self, item):
-#         next_ob, reward, done, next_ac = self.env.step(self.ac)
-#         self.ac = next_ac
-#         return np.array([next_ob]), np.array([next_ac])
-#
-#     def on_epoch_end(self):
-#         ob, ac, target_video = self.env.reset(video_type=self.video_type, trajectory=True, inference=False, fx=1, fy=1,
-#                                               saliency=True)
-#         self.ac = ac
-stand_dict = {
-    "01_PortoRiverside.mp4": [[-0.00014235, 0.00015636], [0.01457013, 0.12722483]],
-    "02_Diner.mp4": [[0.00035419, 0.00058077], [0.01710453, 0.13510216]],
-    "03_PlanEnergyBioLab.mp4": [[1.59446661e-04, 2.62226536e-05], [0.01516597, 0.13287633]],
-    "04_Ocean.mp4": [[-0.00010823, 0.00070909], [0.02380825, 0.14271857]],
-    "05_Waterpark.mp4": [[4.19333558e-04, -6.62591863e-05], [0.01721657, 0.11431039]],
-    "06_DroneFlight.mp4": [[0.00096727, -0.00010646], [0.02123786, 0.11721233]],
-    "07_GazaFishermen.mp4": [[8.66520711e-05, -1.80686089e-03], [0.0256012, 0.13320691]],
-    "08_Sofa.mp4": [[0.00014075, 0.00061949], [0.02242027, 0.11336181]],
-    "09_MattSwift.mp4": [[-0.00080271, -0.0011968], [0.0249275, 0.13625535]],
-    "10_Cows.mp4": [[-0.00026264, 0.00067812], [0.01957265, 0.12899429]],
-    "11_Abbottsford.mp4": [[0.00067969, 0.00065381], [0.02147157, 0.14254084]],
-    "12_TeatroRegioTorino.mp4": [[7.01761207e-05, -2.21156444e-04], [0.01814762, 0.1319638]],
-    "13_Fountain.mp4": [[0.00071678, 0.00064842], [0.02222087, 0.13347862]],
-    "14_Warship.mp4": [[-0.00022952, -0.00096409], [0.02872411, 0.09542387]],
-}
 
 
-def preprocessing(action):
-    action[0] *= 5
-    action[1] = action[1] * 4 if -0.25 < action[1] < 0.25 else action[1] * 2
-    return np.array([action])
+def make_model():
+    input_shape = (None, 224, 224, 3)
+    state_in = Input(input_shape)
+    o_in = Input((None, 2))
+    x = ConvLSTM2D(256, 3, 3, padding='same', return_sequences=True)(state_in)
+    x = ConvLSTM2D(128, 3, 3, padding='same', return_sequences=True)(x)
+    x = ConvLSTM2D(64, 3, 3, padding='same', return_sequences=True)(x)
+    print(x)
+    x = TimeDistributed(MaxPooling2D())(x)
+    print(x)
+    x = TimeDistributed(Flatten())(x)
+    x = Reshape([-1, 1024])(x)
+    print(x)
+    concat = keras.layers.concatenate([x, o_in])
+    x = Bidirectional(LSTM(128, return_sequences=True))(concat)
+    # x = Bidirectional(LSTM(64, activation=tf.nn.leaky_relu)(x))
+    x = Dense(2, activation='linear')(x)
+
+    m = keras.models.Model(inputs=[state_in, o_in], outputs=x)
+    m.compile(optimizer='adam', loss='mse', metrics=['accuracy'])
+    m.summary()
+    return m
 
 
-def depreprocessing(aa):
-    aa[1] /= 5
-    aa[1] = aa / 2 if aa[1] >= 1 else aa / 4
-    return np.array([aa])
+def make_densenet_model():
+    input_shape = (1, 5, 224, 224, 3)
+    state_in = Input(batch_shape=input_shape)
+    o_in = Input(batch_shape=(1, 1, 2))
+    feature = keras.applications.DenseNet121(include_top=False, pooling="avg")
+    x = TimeDistributed(feature)(state_in)
+    x = Flatten()(x)
+    x = Reshape([1, -1])(x)
+    concat = keras.layers.concatenate([x, o_in])
+    x = Bidirectional(LSTM(128, return_sequences=True, stateful=True, activation="tanh"))(concat)
+    x = Dense(2, activation="sigmoid")(x)
+    m = keras.models.Model(inputs=[state_in, o_in], outputs=x)
+    adam = tf.keras.optimizers.Adam(1e-6)
+    m.compile(optimizer=adam, loss='mse', metrics=['accuracy'])
+    m.summary()
+    return m
 
 
-# def preprocessing(mean, std):
-#     def function(action):
-#         action = np.array(action)
-#         action = (action - mean) / std
-#         return action
-#     return function
-#
-# def depreprocessing(mean, std):
-#     def function(action):
-#         action = np.array(action)
-#         action = (action * std) + mean
-#         return action
-#     return function
+def make_densenet_model2():
+    input_shape = (1, None, 224, 224, 3)
+    input_shape2 = (1, None, 64, 64, 3)
 
-def test_gen(test_range):
-    env = CustomEnv(video_type="test")
-    for _ in range(test_range):
-        ob, ac, target_video = env.reset(video_type="test", trajectory=True, inference=False, fx=0.3, fy=0.3,
-                                         saliency=False)
-        val = 1
-        # history = ob
-        while True:
-            next_ob, reward, done, next_ac = env.step(ac)
-            if done or val == 99:
-                break
-            yield np.array([ob]), preprocessing(ac)
-            val += 1
-            # history = np.concatenate([history, next_ob])
-            ac = next_ac
-            ob = next_ob
+    state_in = Input(batch_shape=input_shape)
+    state_in2 = Input(batch_shape=input_shape2)
+    o_in = Input(batch_shape=(1, None, 2))
+
+    x = ConvLSTM2D(64, 3, 1, padding='same', return_sequences=True, stateful=True)(state_in)
+    x = BatchNormalization()(x)
+    x = ConvLSTM2D(64, 3, 2, padding='same', return_sequences=True, stateful=True)(x)
+    x = BatchNormalization()(x)
+    x = tf.keras.layers.MaxPooling3D()(x)
+    x = ConvLSTM2D(32, 3, 1, padding='same', return_sequences=True, stateful=True)(x)
+    x = BatchNormalization()(x)
+    x = ConvLSTM2D(32, 3, 2, padding='same', return_sequences=True, stateful=True)(x)
+    x = BatchNormalization()(x)
+    x = tf.keras.layers.MaxPooling3D()(x)
+    x = TimeDistributed(Flatten())(x)
+
+    x2 = ConvLSTM2D(16, 3, 1, padding='same', return_sequences=True, stateful=True)(state_in2)
+    x2 = BatchNormalization()(x2)
+    x2 = ConvLSTM2D(16, 3, 2, padding='same', return_sequences=True, stateful=True)(x2)
+    x2 = BatchNormalization()(x2)
+    x2 = tf.keras.layers.MaxPooling3D()(x2)
+    x2 = ConvLSTM2D(8, 3, 1, padding='same', return_sequences=True, stateful=True)(x2)
+    x2 = BatchNormalization()(x2)
+    x2 = ConvLSTM2D(8, 3, 2, padding='same', return_sequences=True, stateful=True)(x2)
+    x2 = BatchNormalization()(x2)
+    x2 = tf.keras.layers.MaxPooling3D()(x2)
+    x2 = TimeDistributed(Flatten())(x2)
+
+    concat = keras.layers.concatenate([x, x2, o_in])
+
+    out = LSTM(256, stateful=True, return_sequences=True)(concat)
+    out = LSTM(256, stateful=True, return_sequences=True)(out)
+
+    out = TimeDistributed(Dense(128, activation="relu"))(out)
+    out = TimeDistributed(Dense(128, activation="relu"))(out)
+    out = TimeDistributed(Dense(2, activation="relu"))(out)
+
+    model = Model([state_in, state_in2, o_in], out)
+    model.compile(optimizer="adam", loss="mae", metrics=["accuracy", "mse"])
+    return model
 
 
-def val_gen():
-    env = CustomEnv(video_type="validation")
+def make_densenet_model3():
+    input_shape = (None, 224, 224, 3)
+    input_shape2 = (None, 64, 64, 3)
+
+    state_in = Input(shape=input_shape, batch_size=1)
+    state_in2 = Input(shape=input_shape2, batch_size=1)
+    o_in = Input(shape=(None, 2), batch_size=1)
+
+    feature = keras.applications.DenseNet121(include_top=False, pooling="avg")
+    x = TimeDistributed(feature)(state_in)
+    x.set_shape((1, None, 1024))
+
+    feature = keras.applications.DenseNet121(include_top=False, pooling="max", weights=None)
+    x2 = TimeDistributed(feature)(state_in2)
+    x2.set_shape((1, None, 1024))
+
+    concat = keras.layers.concatenate([x, x2, o_in])
+    encode, state_h, state_c = LSTM(512, stateful=True, return_state=True)(concat)
+    encoder_states = [state_h, state_c]
+
+    decoder_inputs = Input(shape=(None, 2), batch_size=1)  # past sequence
+    decoder_lstm = LSTM(512, return_sequences=True, return_state=True)
+    decoder_outputs, _, _ = decoder_lstm(decoder_inputs, initial_state=encoder_states)
+    # decoder_states = [state_h, state_c]
+    #
+    # attention_score = tf.keras.layers.dot([decoder_states, encoder_states])
+    # attention_distribution = tf.keras.layers.Softmax()(attention_score)
+    # attention_value = tf.keras.layers.multiply([attention_distribution, encoder_states])
+    # attention_concat = tf.keras.layers.concatenate([attention_value, decoder_states])
+    decoder_dense1 = TimeDistributed(Dense(128, activation='relu'))
+    decoder_dense2 = TimeDistributed(Dense(128, activation='relu'))
+    decoder_dense3 = TimeDistributed(Dense(2, activation='sigmoid'))
+    decoder_outputs = decoder_dense1(decoder_outputs)
+    decoder_outputs = decoder_dense2(decoder_outputs)
+    decoder_outputs = decoder_dense3(decoder_outputs)
+
+    # decoder_dense = TimeDistributed(Dense(2, activation='linear'))
+    # decoder_outputs = decoder_dense(decoder_outputs)
+
+    model = Model([state_in, state_in2, o_in, decoder_inputs], decoder_outputs)
+    # define inference encoder
+    encoder_model = Model([state_in, state_in2, o_in], encoder_states)
+    # define inference decoder
+    decoder_state_input_h = Input((512,))
+    decoder_state_input_c = Input((512,))
+    decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+    decoder_outputs, state_h, state_c = decoder_lstm(decoder_inputs, initial_state=decoder_states_inputs)
+    decoder_dense1 = TimeDistributed(Dense(128, activation='relu'))
+    decoder_dense2 = TimeDistributed(Dense(128, activation='relu'))
+    decoder_dense3 = TimeDistributed(Dense(2, activation='sigmoid'))
+    decoder_outputs = decoder_dense1(decoder_outputs)
+    decoder_outputs = decoder_dense2(decoder_outputs)
+    decoder_outputs = decoder_dense3(decoder_outputs)
+
+    decoder_states = [state_h, state_c]
+
+    # decoder_outputs = decoder_dense(decoder_outputs)
+    decoder_model = Model([decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states)
+    # return all models
+    model.compile(optimizer="adam", loss="mae", metrics=["accuracy", "mse"])
+    return model, encoder_model, decoder_model
+
+
+def read_whole_video(cap, fx=0.3, fy=0.3):
+    video = []
     while True:
-        ob, ac, target_video = env.reset(video_type="validation", trajectory=True, inference=False, fx=0.3, fy=0.3,
-                                         saliency=False)
-        # history = ob
-        val = 1
-        while True:
-            next_ob, reward, done, next_ac = env.step(ac)
-            if done or val == 99:
-                break
-            # history = np.concatenate([history, next_ob])
-            yield np.array([ob]), preprocessing(ac)
-            val += 1
-            ac = next_ac
-            ob = next_ob
+        ret, frame = cap.read()
+        if ret:
+            frame = cv2.resize(frame, dsize=(224, 224))  # 원래 이미지의 fx, fy배
+            # cv2.imshow("test",frame)
+            video.append(frame)
+            # if cv2.waitKey(1) & 0xFF == ord('q'):
+            #     break
+        else:
+            cap.release()
+            break
+    # cv2.destroyAllWindows()
+    return video
 
 
-def train_gen():
-    env = CustomEnv(video_type="train")
+def generator(data, model, segment=2, mode="train"):
+    if mode == "train":
+        video_list = os.listdir(data.train_video_path)
+        path = data.train_video_path
+        size = 45
+    elif mode == "val":
+        video_list = os.listdir(data.train_video_path)
+        path = data.train_video_path
+        size = 12
+    elif mode == "test":
+        video_list = os.listdir(data.test_video_path)
+        path = data.test_video_path
+        size = 57
+    else:
+        raise ValueError(f"mode must be [train, val and test] but got {mode}")
+
+    length = size * len(video_list)
+
+    # model.reset_states()
+    global dataset, enc, dec
+    window_size = 20 // segment
     while True:
-        ob, ac, target_video = env.reset(video_type="train", trajectory=True, inference=False, fx=0.3, fy=0.3,
-                                         saliency=False)
-        val = 1
-        # history = ob
-        while True:
-            next_ob, reward, done, next_ac = env.step(ac)
-            if done or val == 99:
-                break
-            yield np.array([ob]), preprocessing(ac)
-            val += 1
-            # history = np.concatenate([history, next_ob])
-            ac = next_ac
-            ob = next_ob
+        idx_list = list(range(length))
+        for _ in range(length):
+            idx = random.choice(idx_list)
+            idx_list.remove(idx)
+            x_data1 = []
+            x_data2 = []
+            sal_data = []
+            video_index = idx // size
+            trajectory_index = idx % size
+            target_video = video_list[video_index]
+            video = dataset[target_video.split(".")[0]]
+
+            if mode == "train":
+                trajectory = data.train[0][target_video]
+            elif mode == "val":
+                trajectory = data.validation[0][target_video]
+            elif mode == "test":
+                trajectory = data.test[0][target_video]
+            else:
+                raise NotImplementedError("mode error!")
+            for i in range(len(trajectory[trajectory_index])):
+                lat, lng, start_frame, end_frame = trajectory[trajectory_index][i][2], \
+                                                   trajectory[trajectory_index][i][
+                                                       1], int(trajectory[trajectory_index][i][5]), int(
+                    trajectory[trajectory_index][i][6])
+                x = video[start_frame - 1:end_frame]
+                x_data1.append(x[2])
+                x_data2.append([lng, lat])  # 100, 2
+            x1 = x_data1
+            x2 = x_data2
+            # y1 = x_data2[5:]
+            bb = list(map(toDegree, x2))
+            _x1 = [py360convert.e2p(frame, (110, 110), pp[0], pp[1], (64, 64)) for frame, pp in zip(x1, bb)]
+            enc.reset_states()
+            for i in range(18):
+                # model.reset_states()
+                x1 = np.array([x_data1[i*5:(i + 1) * 5]])  # 0 ~ 50
+                x2 = np.array([_x1[i*5:(i + 1) * 5]])  # 0 ~ 50
+                x3 = np.array([x_data2[i*5:(i + 1) * 5]])  # 45 ~50
+                y = np.array([x_data2[(i + 1) * 5:(i + 2) * 5]])  # 50 ~ 55
+                yield [x1, x2, x3, x3], y
 
 
-def learn():
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    session = tf.Session(config=config)
-    writer_path = os.path.join("log", "resnet")
+class SaveCallback(tf.keras.callbacks.Callback):
 
-    custom_env = CustomEnv("test")
-    state_dim = list(custom_env.observation_space.shape)
-    action_dim = list(custom_env.action_space.shape)
+    def __init__(self, enc, dec):
+        self.enc = enc
+        self.dec = dec
+        self.enc_dir = os.path.join('weights', "mae_ed_only_enc")
+        self.dec_dir = os.path.join('weights', "mae_ed_only_dec")
+        if not os.path.exists(self.enc_dir):
+            os.mkdir(self.enc_dir)
+            os.mkdir(self.dec_dir)
 
-    model = Resnet(state_dim, session)
-    # model.restore()
-    tf_writer = tf.summary.FileWriter(writer_path, session.graph)
+        self.best_loss = None
 
-    tensor_board_path = os.path.join(log_path, "supervised")
-    tensor_board_test_path = os.path.join(tensor_board_path, "test")
-    model_weight_path = os.path.join(weight_path, "supervised")
-
-    if not os.path.exists(tensor_board_path):
-        os.mkdir(tensor_board_path)
-    if not os.path.exists(tensor_board_test_path):
-        os.mkdir(tensor_board_test_path)
-    if not os.path.exists(model_weight_path):
-        os.mkdir(model_weight_path)
-
-    tensor_boarder = tf.keras.callbacks.TensorBoard(log_dir=os.path.join(log_path, "supervised"), write_graph=True,
-                                                    batch_size=99,
-                                                    update_freq="batch")
-    tensor_boarder_test = tf.keras.callbacks.TensorBoard(log_dir=os.path.join(log_path, "supervised", "test"),
-                                                         batch_size=99,
-                                                         update_freq="batch")
-    model.set_weight()
-    model_saver = tf.keras.callbacks.ModelCheckpoint(
-        os.path.join(model_weight_path, "model.ckpt"), save_weights_only=True)
-
-    early_stopper = tf.keras.callbacks.EarlyStopping(min_delta=0.001, patience=5)
-
-    model.model.fit_generator(train_gen(), 99, 5000, validation_data=val_gen(), validation_steps=99, shuffle=False,
-                              callbacks=[tensor_boarder, model_saver, early_stopper])
-
-    size = 10
-    model.model.evaluate_generator(test_gen(size), [tensor_boarder_test])
+    def on_epoch_end(self, epoch, logs):
+        if self.best_loss is None:
+            self.best_loss = logs['val_loss']
+            self.enc.save_weights(os.path.join(self.enc_dir, "weights.h5"))
+            self.dec.save_weights(os.path.join(self.dec_dir, "weights.h5"))
+        else:
+            if self.best_loss > logs['val_loss']:
+                self.best_loss = logs['val_loss']
+                self.enc.save_weights(os.path.join(self.enc_dir, "weights.h5"))
+                self.dec.save_weights(os.path.join(self.dec_dir, "weights.h5"))
 
 
-def test():
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True
-    session = tf.Session(config=config)
+class Sequence(tf.keras.utils.Sequence):
+    def __init__(self, dataset, mode="train"):
+        self.data = dataset
+        self.mode = mode
 
-    custom_env = CustomEnv("test")
-    state_dim = list(custom_env.observation_space.shape)
-    action_dim = list(custom_env.action_space.shape)
+        if mode == "train":
+            self.size = 45
+        elif mode == "val":
+            self.size = 12
+        elif mode == "test":
+            self.size = 57
+        else:
+            raise ValueError(f"mode must be [train, val and test] but got {self.mode}")
 
-    model = Resnet(state_dim, session)
-    model.set_weight()
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    now = datetime.datetime.now().strftime("%d_%H-%M-%S")
+        if mode == "train" or mode == "val":
+            self.video_list = os.listdir(self.data.train_video_path)
+            self.path = self.data.train_video_path
+        elif mode == "test":
+            self.video_list = os.listdir(self.data.test_video_path)
+            self.path = self.data.test_video_path
 
-    out = os.path.join(output_path, "supervised")
-    if not os.path.exists(out):
-        os.mkdir(out)
+    def __len__(self):
+        return self.size * len(self.video_list)
 
-    tensor_boarder_test = tf.keras.callbacks.TensorBoard(log_dir=os.path.join(log_path, "supervised", "test"),
-                                                         batch_size=99,
-                                                         update_freq="batch")
-    size = 10
-    # model.model.evaluate_generator(test_gen(size), steps=99, callbacks=[tensor_boarder_test])
+    def __getitem__(self, idx):
+        global model, dataset, enc
+        # model.reset_states()
+        x_data1 = []
+        x_data2 = []
+        y_data = []
+        video_index = idx // self.size
+        trajectory_index = idx % self.size
+        target_video = self.video_list[video_index]
 
-    for i in range(10):
-        obs, acs, target_videos = custom_env.reset(video_type="test", trajectory=True, inference=True, fx=1, fy=1)
+        video = dataset[target_video.split(".")[0]]
+        if self.mode == "train":
+            trajectory = self.data.train[0][target_video]
+        elif self.mode == "val":
+            trajectory = self.data.validation[0][target_video]
+        elif self.mode == "test":
+            trajectory = self.data.test[0][target_video]
+        else:
+            raise NotImplementedError("mode error!")
 
-        writer = cv2.VideoWriter(os.path.join(out, target_videos + "_" + str(now) + ".mp4"),
-                                 fourcc, fps[target_videos], (3840, 1920))
-        # history = obs
-        true_acs = []
-        pred_acs = []
+        for i in range(len(trajectory[trajectory_index])):
+            lat, lng, start_frame, end_frame = trajectory[trajectory_index][i][2], trajectory[trajectory_index][i][
+                1], int(trajectory[trajectory_index][i][5]), int(trajectory[trajectory_index][i][6])
+            # next_lat, next_lng = trajectory[trajectory_index][i+1][2], trajectory[trajectory_index][i+1][1]
+            x = video[start_frame - 1:end_frame]
+            x = x[2]  # 100 , 224, 224, 3
+            x_data1.append(x)
+            x_data2.append([lng, lat])  # 100, 2
+            # y_data.append([next_lat, next_lng])
 
-        while True:
-            pred_ac = model.model.predict(np.array([obs]))
-            print(pred_ac, acs)
-            # pred_ac = depreprocessing(pred_ac)
-            # print(pred_ac, acs)
-            # pred_acs.append(pred_ac)
-            # true_acs.append(acs)
-            next_obs, rewards, dones, next_acs = custom_env.step(pred_ac)
-            # print(pred_ac, acs)
-            if dones:
-                break
-            custom_env.render(writer=writer)
-            obs = next_obs
-            acs = next_acs
-            # history = np.concatenate([history, next_obs])
-        writer.release()
-        # true_acs = np.reshape(true_acs, [-1, 2]).transpose()
-        # pred_acs = np.reshape(pred_acs, [-1, 2]).transpose()
-        # fig = plt.figure()
-        # fig2 = plt.figure()
-        # ax = Axes3D(fig)
-        # ax.set_xlabel('X axis')
-        # ax.set_ylabel('Y axis')
-        # ax.set_zlabel('Z axis')
-        # ax.plot(true_acs[0], true_acs[1])
-        # ax.set_title("true")
-        # ax2 = Axes3D(fig2)
-        # ax2.set_xlabel('X axis')
-        # ax2.set_ylabel('Y axis')
-        # ax2.set_zlabel('Z axis')
-        # ax2.plot(pred_acs[0], pred_acs[1])
-        # ax2.set_title("predict")
-        # plt.show()
+        # x_data1 = np.reshape(x_data1, [10, -1, 224, 224, 3]) # 10, 10, 224, 224, 3
+        # x_data2 = np.reshape(x_data2, [10, -1, 2])  # 10, 10, 2
+        batch_x1, batch_x2, batch_x3, batch_y = [], [], [], []
+        bb = list(map(toDegree, x_data2))
+        _x1 = [py360convert.e2p(frame, (110, 110), pp[0], pp[1], (64, 64)) for frame, pp in zip(x_data1, bb)]
 
+        # for i in range(5, 9):
+        #     batch_x1.append(x_data1[i*10 - 50:i*10])
+        #     batch_x2.append(_x1[i*10 - 50:i*10])
+        #     batch_x3.append(x_data2[i*10-50:i*10])
+        #     batdh_x4.append(x_data2[i*10-5:i*10])
+        #     batch_y.append(x_data2[i*10:i*10+5])
 
-if __name__ == '__main__':
-    # for x, y in train_gen():
-    #     print(np.shape(x), np.shape(y))
-
-    # learn()
-    test()
-    # for i, (x, y) in enumerate(train_gen()):
-    #     losss = model.model.train_on_batch(x, y)
-    #     print(f"loss: {losss})
-    #     reward_summary = tf.Summary(value=[tf.Summary.Value(tag="train_loss", simple_value=losss)])
-    #     tf_writer.add_summary(reward_summary, i)
-    #     if i % 30 == 0:
-    #         model.save(step=i)
-
-    # train = DataGenerator("train")
-    # val = DataGenerator("validation")
-    # test = DataGenerator("test")
-
-    # ep_length = 0
-    # global_step = 0
-    # losses = []
-    # while ep_length < max_ep_length:
-    #     ob, ac, target_video = env.reset(trajectory=True, inference=False)
-    #     loss = []
-    #     # batch_ob, batch_ac = [], []
-    #     print("{}, {}".format(ep_length, target_video))
-    #     while True:
-    #         next_ob, reward, done, next_ac = env.step(ac)
-    #
-    #         padded_ob = tf.keras.preprocessing.sequence.pad_sequences([ob], maxlen=8, dtype=tf.float32, padding="post")
-    #
-    #         if done:
-    #             break
-    #
-    #         l = model.optimize(padded_ob, ac, global_step)
-    #
-    #         loss.append(l)
-    #         ob = next_ob
-    #         ac = next_ac
-    #
-    #     model.reset_state()
-    # losses.append(np.mean(loss))
-    # plt.plot(losses)
-    # plt.show()
-    # if ep_length is not 0 and ep_length % 25 == 0:
-    #     model.save()
-    # ep_length += 1
+        # return [np.array([_x1]), np.array([_x_data2])], np.array([y_data])
 
 
-class LossHistory(tf.keras.callbacks.Callback):
-    def on_train_begin(self, logs={}):
-        self.losses = []
-
-    def on_batch_end(self, batch, logs={}):
-        self.losses.append(logs.get('loss'))
+def toDegree(x):
+    return (np.array(x) * 2 - 1) * np.array([180, 90])
 
 
-class AccuracyHistory(tf.keras.callbacks.Callback):
-    def on_train_begin(self, logs=None):
-        pass
-
-    def on_batch_end(self, batch, logs=None):
-        pass
-
-
-class ModelSaver(tf.keras.callbacks.Callback):
-    def on_train_begin(self, logs=None):
-        pass
-
-    def on_batch_end(self, batch, logs=None):
-        pass
+def scheduler(epoch):
+    if epoch < 10:
+        return 0.01
+    else:
+        return 0.01 * tf.math.exp(0.1 * (10 - epoch))
 
 
-class EvalutateCallback(tf.keras.callbacks.Callback):
-    def on_train_begin(self, logs={}):
-        self.losses = []
+lr_callback = tf.keras.callbacks.LearningRateScheduler(scheduler, verbose=0)
 
-    def on_batch_end(self, batch, logs={}):
-        self.losses.append(logs.get('loss'))
+board_callback = tf.keras.callbacks.TensorBoard(
+    log_dir='log/mae_ed_only', write_graph=True, write_images=False,
+    update_freq='batch')
+
+test_board_callback = tf.keras.callbacks.TensorBoard(
+    log_dir='log/random_test', write_graph=True, write_images=False,
+    update_freq='batch')
+
+ckpt_callback = tf.keras.callbacks.ModelCheckpoint(
+    os.path.join("weights", "mae_ed_only"), monitor='val_loss', verbose=0, save_best_only=True,
+    save_weights_only=False, mode='auto', save_freq='epoch')
+
+early_callback = tf.keras.callbacks.EarlyStopping(
+    monitor='val_loss', min_delta=0.001, patience=5, verbose=0, mode='auto',
+    baseline=None, restore_best_weights=False
+)
+
+data360 = Sal360()
+
+model, enc, dec = make_densenet_model3()
+
+# model = tf.keras.models.load_model(os.path.join("weights", "mae_ed_conv"))
+# enc.load_weights(os.path.join("weights", "mae_ed_conv_enc", "weights.h5"))
+# dec.load_weights(os.path.join("weights", "mae_ed_conv_dec", "weights.h5"))
+
+# model.load_weights(os.path.join("weights", "random0612"))
+# model = tf.keras.models.load_model(os.path.join("weights", "random0612"))
+model.summary()
+enc.summary()
+dec.summary()
+save_callback = SaveCallback(enc, dec)
+
+# #segment= 2
+video_path = os.listdir(os.path.join("video_data", "224x224"))
+dataset = {}
+# saliency_dataset = {}
+
+for path in video_path:
+    name = path.split(".")[0]
+    tmp = np.load(os.path.join("video_data", "224x224", path))
+    # tmp_saliecny = np.load(os.path.join("saliency_data", "224x224", path))
+    dataset[name] = tmp / 255.
+    # saliency_dataset[name] = tmp_saliecny
+
+train_gen = generator(data360, model, mode="train", segment=2)
+val_gen = generator(data360, model, mode="val", segment=2)
+test_gen = generator(data360, model, mode="test", segment=2)
+hist = model.fit(train_gen, steps_per_epoch=630 * 18, validation_data=val_gen, validation_steps=12 * 14 * 18,
+                 validation_freq=2, epochs=1000,
+                 callbacks=[board_callback, ckpt_callback, lr_callback, early_callback])
+
+# gen = Sequence(data360, mode="train")
+# val_gen = Sequence(data360, mode="val")
+# test_gen = Sequence(data360, mode="test")
+# hist = model.fit(gen, validation_data=val_gen, validation_freq=1, epochs=1000, shuffle=True, callbacks=[board_callback, ckpt_callback, lr_callback, save_callback, early_callback])
+
+# # hist = model.fit(gen, validation_data=val_gen, validation_freq=2, epochs=1000, shuffle=True)
+
+# results = model.evaluate(test_gen)
+# print('test loss, test acc:', results)
+
+# result = model.predict_generator(Sequence(data360, mode="test"))
+# print(np.shape(result))
+# np.save(os.path.join("data", "random0612_tanh.npy"), result)
